@@ -147,13 +147,16 @@ end;
 function GetPCBLayerStackup(ROOT_DIR): String;
 var
     Board           : IPCB_Board;
-    LayerIterator   : IPCB_LayerObjectIterator;
+    TheLayerStack   : IPCB_LayerStack_V7;
     LayerObject     : IPCB_LayerObject;
+    DielObj         : IPCB_DielectricObject;
     StackupArray    : TStringList;
     LayerProps      : TStringList;
     OutputLines     : TStringList;
     TotalThickness  : Double;
+    DielHeight      : Double;
     LayerCount      : Integer;
+    DielCount       : Integer;
 begin
     Result := '';
 
@@ -165,76 +168,89 @@ begin
         Exit;
     end;
 
+    // Get the layer stack (includes copper + dielectric layer objects)
+    TheLayerStack := Board.LayerStack_V7;
+    if (TheLayerStack = nil) then
+    begin
+        Result := '{"error": "No layer stack available"}';
+        Exit;
+    end;
+
     // Create arrays for stackup data
     StackupArray := TStringList.Create;
     TotalThickness := 0;
     LayerCount := 0;
-    
+    DielCount := 0;
+
     try
-        // Get the electrical layer iterator
-        LayerIterator := Board.ElectricalLayerIterator;
-        
-        // Process each electrical layer
-        while LayerIterator.Next do
+        // Walk the physical stack from the top copper to the bottom copper.
+        // For every copper layer EXCEPT the last, the layer's Dielectric property
+        // describes the substrate (prepreg or core) that sits between it and the
+        // next copper layer down. Altium reports cores with DielectricType =
+        // eNoDielectric even though they carry a real material/height/Dk, so we
+        // must not gate on the type: any internal gap is a real dielectric.
+        LayerObject := TheLayerStack.FirstLayer;
+        while (LayerObject <> nil) do
         begin
-            LayerObject := LayerIterator.LayerObject;
-            
-            // Create layer properties
             LayerProps := TStringList.Create;
             try
-                // Basic layer information
+                // ---- Copper layer ----
                 AddJSONProperty(LayerProps, 'layer_name', LayerObject.Name);
                 AddJSONProperty(LayerProps, 'layer_id', Layer2String(LayerObject.LayerID));
                 AddJSONProperty(LayerProps, 'material_type', 'Copper');
                 AddJSONNumber(LayerProps, 'copper_thickness_mils', LayerObject.CopperThickness / 10000);
                 AddJSONNumber(LayerProps, 'copper_thickness_um', LayerObject.CopperThickness / 254);
-                
-                // Add copper thickness to total
                 TotalThickness := TotalThickness + (LayerObject.CopperThickness / 10000);
-                
-                // Dielectric information (if present)
-                if LayerObject.Dielectric.DielectricType <> eNoDielectric then
+
+                // ---- Dielectric beneath this copper layer ----
+                DielObj := LayerObject.Dielectric;
+                if (LayerObject <> TheLayerStack.LastLayer) and (DielObj <> nil) then
                 begin
-                    case LayerObject.Dielectric.DielectricType of
+                    // Internal gap -> the substrate is always real (prepreg/core),
+                    // regardless of how DielectricType is reported.
+                    DielHeight := DielObj.DielectricHeight / 10000;
+                    case DielObj.DielectricType of
                         eCore: AddJSONProperty(LayerProps, 'dielectric_type', 'Core');
                         ePrePreg: AddJSONProperty(LayerProps, 'dielectric_type', 'PrePreg');
                         eSurfaceMaterial: AddJSONProperty(LayerProps, 'dielectric_type', 'Surface Material');
                     else
-                        AddJSONProperty(LayerProps, 'dielectric_type', 'Unknown');
+                        // eNoDielectric / unset on an internal gap = core substrate
+                        AddJSONProperty(LayerProps, 'dielectric_type', 'Core');
                     end;
-                    
-                    AddJSONProperty(LayerProps, 'dielectric_material', LayerObject.Dielectric.DielectricMaterial);
-                    AddJSONNumber(LayerProps, 'dielectric_height_mils', LayerObject.Dielectric.DielectricHeight / 10000);
-                    AddJSONNumber(LayerProps, 'dielectric_height_um', LayerObject.Dielectric.DielectricHeight / 254);
-                    AddJSONNumber(LayerProps, 'dielectric_constant', LayerObject.Dielectric.DielectricConstant);
-                    
-                    // Add dielectric thickness to total
-                    TotalThickness := TotalThickness + (LayerObject.Dielectric.DielectricHeight / 10000);
+                    AddJSONProperty(LayerProps, 'dielectric_material', DielObj.DielectricMaterial);
+                    AddJSONNumber(LayerProps, 'dielectric_height_mils', DielHeight);
+                    AddJSONNumber(LayerProps, 'dielectric_height_um', DielObj.DielectricHeight / 254);
+                    AddJSONNumber(LayerProps, 'dielectric_constant', DielObj.DielectricConstant);
+                    TotalThickness := TotalThickness + DielHeight;
+                    DielCount := DielCount + 1;
                 end
                 else
                 begin
+                    // Bottom-most copper: no in-stack dielectric below it.
                     AddJSONProperty(LayerProps, 'dielectric_type', 'No Dielectric');
                     AddJSONProperty(LayerProps, 'dielectric_material', '');
                     AddJSONNumber(LayerProps, 'dielectric_height_mils', 0);
                     AddJSONNumber(LayerProps, 'dielectric_height_um', 0);
                     AddJSONNumber(LayerProps, 'dielectric_constant', 0);
                 end;
-                
-                // Add layer order
+
                 AddJSONInteger(LayerProps, 'layer_order', LayerCount + 1);
-                
-                // Add to stackup array
                 StackupArray.Add(BuildJSONObject(LayerProps, 1));
                 LayerCount := LayerCount + 1;
             finally
                 LayerProps.Free;
             end;
+
+            if (LayerObject = TheLayerStack.LastLayer) then Break;
+            LayerObject := TheLayerStack.NextLayer(LayerObject);
         end;
-        
+
         // Create final stackup object with summary
         LayerProps := TStringList.Create;
         try
             AddJSONInteger(LayerProps, 'total_layers', LayerCount);
+            AddJSONInteger(LayerProps, 'total_copper_layers', LayerCount);
+            AddJSONInteger(LayerProps, 'total_dielectric_layers', DielCount);
             AddJSONNumber(LayerProps, 'total_thickness_mils', TotalThickness);
             AddJSONNumber(LayerProps, 'total_thickness_mm', TotalThickness * 0.0254);
             AddJSONProperty(LayerProps, 'board_name', ExtractFileName(Board.FileName));
