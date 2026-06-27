@@ -1442,6 +1442,33 @@ async def get_pcb_rules(ctx: Context) -> str:
     return json.dumps(rules_data, indent=2)
 
 @mcp.tool()
+async def get_board_info(ctx: Context) -> str:
+    """
+    Get board-level summary information for the current Altium PCB:
+    board name, display unit, overall width/height, origin, signal layer
+    count, and total physical stackup thickness (in mm and mils).
+
+    Returns:
+        str: JSON object with board-level information
+    """
+    logger.info("Getting board info")
+
+    response = await altium_bridge.execute_command("get_board_info", {})
+
+    if not response.get("success", False):
+        error_msg = response.get("error", "Unknown error")
+        logger.error(f"Error getting board info: {error_msg}")
+        return json.dumps({"error": f"Failed to get board info: {error_msg}"})
+
+    board_data = response.get("result", {})
+    if not board_data:
+        return json.dumps({"message": "No active PCB document"})
+
+    logger.info("Retrieved board info")
+    return json.dumps(board_data, indent=2)
+
+
+@mcp.tool()
 async def get_pcb_layer_stackup(ctx: Context) -> str:
     """
     Get the detailed layer stackup information from the current Altium PCB including

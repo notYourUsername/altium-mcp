@@ -1,0 +1,15 @@
+{
+  "board_name": "Drone-Controller.PcbDoc",
+  "display_unit": "mm",
+  "width_mm": 52.76521,
+  "height_mm": 36.00005,
+  "width_mils": 2077,
+  "height_mils": 1417,
+  "origin_x_mm": 100.27919,
+  "origin_y_mm": 48.137,
+  "origin_x_mils": 3948,
+  "origin_y_mils": 1895,
+  "signal_layer_count": 4,
+  "total_thickness_mils": 58.741,
+  "total_thickness_mm": 1.4920214
+}

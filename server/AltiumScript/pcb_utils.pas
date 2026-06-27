@@ -143,6 +143,91 @@ begin
     end;
 end;
 
+// Function to get board-level summary info (size, origin, layers, thickness, units)
+function GetBoardInfo(ROOT_DIR): String;
+var
+    Board          : IPCB_Board;
+    TheLayerStack  : IPCB_LayerStack_V7;
+    LayerObject    : IPCB_LayerObject;
+    DielObj        : IPCB_DielectricObject;
+    Props          : TStringList;
+    OutputLines    : TStringList;
+    BR             : TCoordRect;
+    wCoord, hCoord : Integer;
+    TotalThk       : Double;
+begin
+    Result := '';
+
+    Board := PCBServer.GetCurrentPCBBoard;
+    if (Board = nil) then
+    begin
+        Result := '{"error": "No PCB document is currently active"}';
+        Exit;
+    end;
+
+    Props := TStringList.Create;
+    try
+        AddJSONProperty(Props, 'board_name', ExtractFileName(Board.FileName));
+
+        // Display unit
+        if (Board.DisplayUnit = eImperial) then
+            AddJSONProperty(Props, 'display_unit', 'mil')
+        else
+            AddJSONProperty(Props, 'display_unit', 'mm');
+
+        // Board outline bounding box (use Altium's unit-correct converters)
+        if (Board.BoardOutline <> nil) then
+        begin
+            BR := Board.BoardOutline.BoundingRectangle;
+            wCoord := BR.Right - BR.Left;
+            hCoord := BR.Top - BR.Bottom;
+            AddJSONNumber(Props, 'width_mm', CoordToMMs(wCoord));
+            AddJSONNumber(Props, 'height_mm', CoordToMMs(hCoord));
+            AddJSONNumber(Props, 'width_mils', CoordToMils(wCoord));
+            AddJSONNumber(Props, 'height_mils', CoordToMils(hCoord));
+        end;
+
+        // Origin
+        AddJSONNumber(Props, 'origin_x_mm', CoordToMMs(Board.XOrigin));
+        AddJSONNumber(Props, 'origin_y_mm', CoordToMMs(Board.YOrigin));
+        AddJSONNumber(Props, 'origin_x_mils', CoordToMils(Board.XOrigin));
+        AddJSONNumber(Props, 'origin_y_mils', CoordToMils(Board.YOrigin));
+
+        // Layer count + total physical thickness (copper + dielectric)
+        TheLayerStack := Board.LayerStack_V7;
+        TotalThk := 0;
+        if (TheLayerStack <> nil) then
+        begin
+            AddJSONInteger(Props, 'signal_layer_count', TheLayerStack.SignalLayerCount);
+            LayerObject := TheLayerStack.FirstLayer;
+            while (LayerObject <> nil) do
+            begin
+                TotalThk := TotalThk + (LayerObject.CopperThickness / 10000);
+                DielObj := LayerObject.Dielectric;
+                if (LayerObject <> TheLayerStack.LastLayer) and (DielObj <> nil) then
+                    TotalThk := TotalThk + (DielObj.DielectricHeight / 10000);
+                if (LayerObject = TheLayerStack.LastLayer) then Break;
+                LayerObject := TheLayerStack.NextLayer(LayerObject);
+            end;
+        end
+        else
+            AddJSONInteger(Props, 'signal_layer_count', 0);
+
+        AddJSONNumber(Props, 'total_thickness_mils', TotalThk);
+        AddJSONNumber(Props, 'total_thickness_mm', TotalThk * 0.0254);
+
+        OutputLines := TStringList.Create;
+        try
+            OutputLines.Text := BuildJSONObject(Props);
+            Result := WriteJSONToFile(OutputLines, ROOT_DIR+'\temp_board_info.json');
+        finally
+            OutputLines.Free;
+        end;
+    finally
+        Props.Free;
+    end;
+end;
+
 // Function to get detailed layer stackup information
 function GetPCBLayerStackup(ROOT_DIR): String;
 var
