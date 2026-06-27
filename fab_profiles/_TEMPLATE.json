@@ -1,0 +1,46 @@
+{
+  "fab": "EXAMPLE_TEMPLATE",
+  "verified": false,
+  "source": "REPLACE WITH FAB DOC URL",
+  "retrieved": "REPLACE WITH ISO DATE",
+  "notes": "PLACEHOLDER VALUES ONLY. Do not use for manufacturing. Copy this file per fab house (e.g. jlcpcb.json), fill in real published stackup + capability numbers, then set verified=true after a side-by-side check.",
+  "stackups": [
+    {
+      "name": "2L-1.6mm",
+      "layer_count": 2,
+      "finished_thickness_mm": 1.6,
+      "impedance_controlled": false,
+      "layers": [
+        { "kind": "Copper", "copper_weight_oz": 1.0, "thickness_mm": 0.035 },
+        { "kind": "Core", "material": "FR-4", "thickness_mm": 1.53, "dielectric_constant": 4.5 },
+        { "kind": "Copper", "copper_weight_oz": 1.0, "thickness_mm": 0.035 }
+      ]
+    },
+    {
+      "name": "4L-1.6mm",
+      "layer_count": 4,
+      "finished_thickness_mm": 1.6,
+      "impedance_controlled": false,
+      "layers": [
+        { "kind": "Copper", "copper_weight_oz": 1.0, "thickness_mm": 0.035 },
+        { "kind": "PrePreg", "material": "FR-4", "thickness_mm": 0.2104, "dielectric_constant": 4.4 },
+        { "kind": "Copper", "copper_weight_oz": 0.5, "thickness_mm": 0.0175 },
+        { "kind": "Core", "material": "FR-4", "thickness_mm": 1.065, "dielectric_constant": 4.6 },
+        { "kind": "Copper", "copper_weight_oz": 0.5, "thickness_mm": 0.0175 },
+        { "kind": "PrePreg", "material": "FR-4", "thickness_mm": 0.2104, "dielectric_constant": 4.4 },
+        { "kind": "Copper", "copper_weight_oz": 1.0, "thickness_mm": 0.035 }
+      ]
+    }
+  ],
+  "rules": {
+    "min_trace_mm": 0.127,
+    "min_space_mm": 0.127,
+    "min_via_diameter_mm": 0.45,
+    "min_via_drill_mm": 0.3,
+    "min_annular_ring_mm": 0.075,
+    "min_hole_to_hole_mm": 0.5,
+    "copper_to_edge_mm": 0.3,
+    "min_silk_width_mm": 0.15,
+    "soldermask_expansion_mm": 0.05
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "total_layers": 4,
+  "total_copper_layers": 4,
+  "total_dielectric_layers": 3,
+  "total_thickness_mils": 58.741,
+  "total_thickness_mm": 1.4920214,
+  "board_name": "Drone-Controller.PcbDoc",
+  "layers": [
+    {
+      "layer_name": "Top Layer",
+      "layer_id": "Top Layer",
+      "material_type": "Copper",
+      "copper_thickness_mils": 0.689,
+      "copper_thickness_um": 17.5,
+      "dielectric_type": "PrePreg",
+      "dielectric_material": "PP-006",
+      "dielectric_height_mils": 7.717,
+      "dielectric_height_um": 196.0,
+      "dielectric_constant": 4.74,
+      "layer_order": 1
+    },
+    {
+      "layer_name": "GND",
+      "layer_id": "Mid Layer 1",
+      "material_type": "Copper",
+      "copper_thickness_mils": 0.689,
+      "copper_thickness_um": 17.5,
+      "dielectric_type": "Core",
+      "dielectric_material": "FR-4",
+      "dielectric_height_mils": 40.551,
+      "dielectric_height_um": 1030.0,
+      "dielectric_constant": 4.6,
+      "layer_order": 2
+    },
+    {
+      "layer_name": "PWR",
+      "layer_id": "Mid Layer 2",
+      "material_type": "Copper",
+      "copper_thickness_mils": 0.689,
+      "copper_thickness_um": 17.5,
+      "dielectric_type": "PrePreg",
+      "dielectric_material": "PP-006",
+      "dielectric_height_mils": 7.717,
+      "dielectric_height_um": 196.0,
+      "dielectric_constant": 4.74,
+      "layer_order": 3
+    },
+    {
+      "layer_name": "Bottom Layer",
+      "layer_id": "Bottom Layer",
+      "material_type": "Copper",
+      "copper_thickness_mils": 0.689,
+      "copper_thickness_um": 17.5,
+      "dielectric_type": "No Dielectric",
+      "dielectric_material": "",
+      "dielectric_height_mils": 0,
+      "dielectric_height_um": 0,
+      "dielectric_constant": 0,
+      "layer_order": 4
+    }
+  ]
+}
