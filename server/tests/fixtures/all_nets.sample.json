@@ -1,0 +1,12 @@
+[
+  "3V3", "5V", "5V_CAN", "5V_USB", "A_N", "A_P",
+  "CAN1_N", "CAN1_P", "CAN2_N", "CAN2_P", "GND",
+  "GPS_PPS", "GPS_PRG", "GPS_RESET", "IMU_INT",
+  "MCU_CAN_RX_1", "MCU_CAN_RX_2", "MCU_CAN_TX_1", "MCU_CAN_TX_2",
+  "MCU_PA2", "MCU_PA3", "MCU_RX", "MCU_TX", "MISO", "MOSI",
+  "NetC10_2", "NetC11_2", "NetC14_2", "NetC16_2", "NetC23_1",
+  "NetC30_2", "NetC31_2", "NetC7_2", "NetJ1_A5", "NetJ1_B5",
+  "NetL3_2", "NetL4_2", "NetR4_1", "NetR4_2", "NetR7_2", "NetR9_2",
+  "NSS1", "NSS2", "SCK", "SCL", "SDA", "SWCLK", "SWDIO",
+  "USB_D_N", "USB_D_P", "VCC_RF"
+]

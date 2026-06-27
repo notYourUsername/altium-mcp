@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "get_pcb_rules response",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["descriptor", "rule_kind", "filter1", "filter2"],
+    "properties": {
+      "descriptor": { "type": "string" },
+      "rule_kind": { "type": "string" },
+      "filter1": { "type": "string" },
+      "filter2": { "type": "string" }
+    },
+    "additionalProperties": true
+  }
+}
