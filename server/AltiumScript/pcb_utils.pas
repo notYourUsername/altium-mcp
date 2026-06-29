@@ -267,6 +267,93 @@ begin
     Result := GetDRCViolations(ROOT_DIR);
 end;
 
+// Function to create (or update) a Clearance Constraint design rule.
+// Params (from request JSON): rule_name, scope1 (default All), scope2 (default All),
+// gap_mils (clearance in mils). Mirrors the create_net_class object-creation idiom.
+function ExecuteCreateClearanceRule(RequestData: TStringList): String;
+var
+    i, ValueStart : Integer;
+    RuleName, Scope1, Scope2, ValStr : String;
+    GapMils : Double;
+    Board   : IPCB_Board;
+    Rule    : IPCB_Rule;
+    ResultProps : TStringList;
+    OutputLines : TStringList;
+begin
+    RuleName := '';
+    Scope1 := 'All';
+    Scope2 := 'All';
+    GapMils := 10;
+
+    for i := 0 to RequestData.Count - 1 do
+    begin
+        if (Pos('"rule_name"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            RuleName := TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1));
+        end
+        else if (Pos('"scope1"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            Scope1 := TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1));
+        end
+        else if (Pos('"scope2"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            Scope2 := TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1));
+        end
+        else if (Pos('"gap_mils"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            ValStr := TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1));
+            ValStr := StringReplace(ValStr, ',', '', REPLACEALL);
+            GapMils := StrToFloatDef(ValStr, 10);
+        end;
+    end;
+
+    Board := PCBServer.GetCurrentPCBBoard;
+    if (Board = nil) then
+    begin
+        Result := '{"success": false, "error": "No PCB document is currently active"}';
+        Exit;
+    end;
+    if (RuleName = '') then
+    begin
+        Result := '{"success": false, "error": "No rule_name provided"}';
+        Exit;
+    end;
+
+    PCBServer.PreProcess;
+    Rule := PCBServer.PCBRuleFactory(eRule_Clearance);
+    Rule.Name := RuleName;
+    Rule.Scope1Expression := Scope1;
+    Rule.Scope2Expression := Scope2;
+    Rule.Gap := MMsToCoord(GapMils * 0.0254);
+    Rule.DRCEnabled := True;
+    Board.AddPCBObject(Rule);
+    PCBServer.SendMessageToRobots(Rule.I_ObjectAddress, c_Broadcast, PCBM_BoardRegisteration, c_NoEventData);
+    PCBServer.PostProcess;
+
+    ResultProps := TStringList.Create;
+    try
+        AddJSONBoolean(ResultProps, 'success', True);
+        AddJSONProperty(ResultProps, 'rule_name', RuleName);
+        AddJSONProperty(ResultProps, 'rule_kind', 'Clearance');
+        AddJSONProperty(ResultProps, 'scope1', Scope1);
+        AddJSONProperty(ResultProps, 'scope2', Scope2);
+        AddJSONNumber(ResultProps, 'gap_mils', GapMils);
+        OutputLines := TStringList.Create;
+        try
+            OutputLines.Text := BuildJSONObject(ResultProps);
+            Result := OutputLines.Text;
+        finally
+            OutputLines.Free;
+        end;
+    finally
+        ResultProps.Free;
+    end;
+end;
+
 // Function to get routed copper length per net (sum of tracks + arcs)
 function GetNetsWithLength(ROOT_DIR): String;
 var

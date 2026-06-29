@@ -1494,6 +1494,36 @@ async def get_pcb_rules(ctx: Context) -> str:
     return json.dumps(rules_data, indent=2)
 
 @mcp.tool()
+async def create_clearance_rule(ctx: Context, rule_name: str, gap_mils: float,
+                                scope1: str = "All", scope2: str = "All") -> str:
+    """
+    Create a Clearance Constraint design rule on the current Altium PCB.
+
+    Args:
+        rule_name: Name for the new rule (e.g. "Clearance_HV").
+        gap_mils: Minimum clearance gap in mils.
+        scope1: First scope as an Altium query (default "All", e.g. "InNet('HV')").
+        scope2: Second scope as an Altium query (default "All").
+
+    Returns:
+        str: JSON object with the created rule's details (or an error).
+    """
+    logger.info(f"Creating clearance rule {rule_name}")
+
+    response = await altium_bridge.execute_command(
+        "create_clearance_rule",
+        {"rule_name": rule_name, "gap_mils": gap_mils, "scope1": scope1, "scope2": scope2},
+    )
+
+    if not response.get("success", False):
+        error_msg = response.get("error", "Unknown error")
+        logger.error(f"Error creating clearance rule: {error_msg}")
+        return json.dumps({"error": f"Failed to create clearance rule: {error_msg}"})
+
+    return json.dumps(response.get("result", {}), indent=2)
+
+
+@mcp.tool()
 async def run_drc(ctx: Context) -> str:
     """
     Run the batch Design Rule Check (DRC) on the current Altium PCB, then return the

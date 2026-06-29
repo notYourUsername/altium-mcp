@@ -742,6 +742,8 @@ begin
             Result := ExecuteSetPCBLayerVisibility(RequestData);   
         'get_pcb_layer_stackup':
             Result := GetPCBLayerStackup(ROOT_DIR);         
+        'create_clearance_rule':
+            Result := ExecuteCreateClearanceRule(RequestData);
         'run_drc':
             Result := RunDRC(ROOT_DIR);
         'get_drc_violations':
