@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "get_drc_violations response",
+  "type": "object",
+  "required": ["total_violations", "violations"],
+  "properties": {
+    "total_violations": { "type": "integer", "minimum": 0 },
+    "violations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["x_mils", "y_mils", "x_mm", "y_mm"],
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "x_mils": { "type": "number" },
+          "y_mils": { "type": "number" },
+          "x_mm": { "type": "number" },
+          "y_mm": { "type": "number" }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

@@ -742,6 +742,8 @@ begin
             Result := ExecuteSetPCBLayerVisibility(RequestData);   
         'get_pcb_layer_stackup':
             Result := GetPCBLayerStackup(ROOT_DIR);         
+        'get_drc_violations':
+            Result := GetDRCViolations(ROOT_DIR);
         'get_board_info':
             Result := GetBoardInfo(ROOT_DIR);
         'get_nets_with_length':

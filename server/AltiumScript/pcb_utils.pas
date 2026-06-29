@@ -143,6 +143,75 @@ begin
     end;
 end;
 
+// Function to read the DRC violations currently present on the board
+function GetDRCViolations(ROOT_DIR): String;
+var
+    Board       : IPCB_Board;
+    Iterator    : IPCB_BoardIterator;
+    Violation   : IPCB_Violation;
+    ViolArray   : TStringList;
+    Props       : TStringList;
+    ResultProps : TStringList;
+    OutputLines : TStringList;
+    BR          : TCoordRect;
+    cx, cy      : Integer;
+begin
+    Result := '';
+
+    Board := PCBServer.GetCurrentPCBBoard;
+    if (Board = nil) then
+    begin
+        Result := '{"error": "No PCB document is currently active"}';
+        Exit;
+    end;
+
+    ViolArray := TStringList.Create;
+    try
+        Iterator := Board.BoardIterator_Create;
+        Iterator.AddFilter_ObjectSet(MkSet(eViolationObject));
+        Iterator.AddFilter_LayerSet(AllLayers);
+        Iterator.AddFilter_Method(eProcessAll);
+        Violation := Iterator.FirstPCBObject;
+        while (Violation <> nil) do
+        begin
+            Props := TStringList.Create;
+            try
+                AddJSONProperty(Props, 'name', Violation.Name);
+                AddJSONProperty(Props, 'description', Violation.Description);
+                BR := Violation.BoundingRectangle;
+                cx := (BR.Left + BR.Right) div 2;
+                cy := (BR.Bottom + BR.Top) div 2;
+                AddJSONNumber(Props, 'x_mils', CoordToMils(cx));
+                AddJSONNumber(Props, 'y_mils', CoordToMils(cy));
+                AddJSONNumber(Props, 'x_mm', CoordToMMs(cx));
+                AddJSONNumber(Props, 'y_mm', CoordToMMs(cy));
+                ViolArray.Add(BuildJSONObject(Props, 1));
+            finally
+                Props.Free;
+            end;
+            Violation := Iterator.NextPCBObject;
+        end;
+        Board.BoardIterator_Destroy(Iterator);
+
+        ResultProps := TStringList.Create;
+        try
+            AddJSONInteger(ResultProps, 'total_violations', ViolArray.Count);
+            ResultProps.Add(BuildJSONArray(ViolArray, 'violations'));
+            OutputLines := TStringList.Create;
+            try
+                OutputLines.Text := BuildJSONObject(ResultProps);
+                Result := WriteJSONToFile(OutputLines, ROOT_DIR+'\temp_drc.json');
+            finally
+                OutputLines.Free;
+            end;
+        finally
+            ResultProps.Free;
+        end;
+    finally
+        ViolArray.Free;
+    end;
+end;
+
 // Function to get routed copper length per net (sum of tracks + arcs)
 function GetNetsWithLength(ROOT_DIR): String;
 var

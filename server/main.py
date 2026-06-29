@@ -1494,6 +1494,34 @@ async def get_pcb_rules(ctx: Context) -> str:
     return json.dumps(rules_data, indent=2)
 
 @mcp.tool()
+async def get_drc_violations(ctx: Context) -> str:
+    """
+    Return the Design Rule Check (DRC) violations currently present on the active
+    Altium PCB, each with its description and location (x/y in mm and mils) so you
+    can find it on the board. Run a DRC in Altium first (Tools > Design Rule Check)
+    to refresh the violation set.
+
+    Returns:
+        str: JSON object with total_violations and a violations array
+    """
+    logger.info("Getting DRC violations")
+
+    response = await altium_bridge.execute_command("get_drc_violations", {})
+
+    if not response.get("success", False):
+        error_msg = response.get("error", "Unknown error")
+        logger.error(f"Error getting DRC violations: {error_msg}")
+        return json.dumps({"error": f"Failed to get DRC violations: {error_msg}"})
+
+    data = response.get("result", {})
+    if not data:
+        return json.dumps({"message": "No active PCB document"})
+
+    logger.info("DRC complete")
+    return json.dumps(data, indent=2)
+
+
+@mcp.tool()
 async def get_bom(ctx: Context) -> str:
     """
     Export a grouped Bill of Materials (BOM) for the current Altium PCB.
