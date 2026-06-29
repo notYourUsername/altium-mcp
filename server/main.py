@@ -1494,6 +1494,33 @@ async def get_pcb_rules(ctx: Context) -> str:
     return json.dumps(rules_data, indent=2)
 
 @mcp.tool()
+async def run_drc(ctx: Context) -> str:
+    """
+    Run the batch Design Rule Check (DRC) on the current Altium PCB, then return the
+    resulting violations, each with its name/description and location (x/y in mm and
+    mils). Use this for an on-demand "check my board". The report window is suppressed.
+
+    Returns:
+        str: JSON object with total_violations and a violations array
+    """
+    logger.info("Running DRC")
+
+    response = await altium_bridge.execute_command("run_drc", {})
+
+    if not response.get("success", False):
+        error_msg = response.get("error", "Unknown error")
+        logger.error(f"Error running DRC: {error_msg}")
+        return json.dumps({"error": f"Failed to run DRC: {error_msg}"})
+
+    data = response.get("result", {})
+    if not data:
+        return json.dumps({"message": "No active PCB document"})
+
+    logger.info("DRC complete")
+    return json.dumps(data, indent=2)
+
+
+@mcp.tool()
 async def get_drc_violations(ctx: Context) -> str:
     """
     Return the Design Rule Check (DRC) violations currently present on the active

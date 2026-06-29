@@ -212,6 +212,38 @@ begin
     end;
 end;
 
+// Function to run the batch Design Rule Check, then return the resulting violations.
+// RunBatchDesignRuleCheck signature (from Altium code completion):
+//   RunBatchDesignRuleCheck(ReportFilename: WideString; DRCReportFormat: TDRCReportFileFormat;
+//                           DisplayReportFile: LongBool; PublishToWeb: LongBool): LongBool
+// Format 0 = first report format; DisplayReportFile False keeps the report window from popping.
+function RunDRC(ROOT_DIR): String;
+var
+    Board  : IPCB_Board;
+    PCBDoc : IServerDocument;
+begin
+    Result := '';
+
+    Board := PCBServer.GetCurrentPCBBoard;
+    if (Board = nil) then
+    begin
+        Result := '{"error": "No PCB document is currently active"}';
+        Exit;
+    end;
+
+    // RunBatchDesignRuleCheck resolves the PCB through the FOCUSED project. When
+    // this script is launched from its own script project, focus the PCB document
+    // first so the DRC finds it within its parent PCB project.
+    PCBDoc := Client.GetDocumentByPath(Board.FileName);
+    if (PCBDoc <> nil) then
+        Client.ShowDocument(PCBDoc);
+
+    Board.RunBatchDesignRuleCheck(ROOT_DIR + '\temp_drc_report.html', 0, False, False);
+
+    // Reuse the reader to collect the freshly-created violation objects.
+    Result := GetDRCViolations(ROOT_DIR);
+end;
+
 // Function to get routed copper length per net (sum of tracks + arcs)
 function GetNetsWithLength(ROOT_DIR): String;
 var
