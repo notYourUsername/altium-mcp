@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "get_nets_with_length response",
+  "type": "object",
+  "required": ["total_routed_nets", "nets"],
+  "properties": {
+    "total_routed_nets": { "type": "integer", "minimum": 0 },
+    "nets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["net", "length_mils", "length_mm"],
+        "properties": {
+          "net": { "type": "string" },
+          "length_mils": { "type": "number", "minimum": 0 },
+          "length_mm": { "type": "number", "minimum": 0 }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}
