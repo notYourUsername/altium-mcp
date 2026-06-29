@@ -1,4 +1,4 @@
-from mcp.server.fastmcp import FastMCP, Context
+﻿from mcp.server.fastmcp import FastMCP, Context
 import json
 import os
 import time
@@ -638,7 +638,7 @@ async def create_schematic_symbol(ctx: Context, symbol_name: str, description: s
                   place a backslash after EACH character that should be overbarred.
                   Examples: R\E\S\E\T\ renders as RESET with overbar.
                            C\S\/A0 renders as CS with overbar followed by /A0 without overbar.
-                  Do NOT use ~{...} or other notation — only the backslash-per-character format works in Altium.
+                  Do NOT use ~{...} or other notation â€” only the backslash-per-character format works in Altium.
 
     Args:
         symbol_name (str): Name of the symbol to create
@@ -1017,8 +1017,33 @@ async def get_all_nets(ctx: Context) -> str:
         logger.error(f"Error getting nets: {error_msg}")
         return json.dumps({"error": f"Failed to get nets: {error_msg}"})
 
-    # Result is already a JSON‑serialisable Python list
+    # Result is already a JSONâ€‘serialisable Python list
     return json.dumps(response.get("result", []), indent=2)
+
+@mcp.tool()
+async def get_schematic_connectivity(ctx: Context) -> str:
+    """
+    Return pin-by-pin connectivity from the schematic, grouped by net name.
+
+    Unlike get_schematic_nets (which returns only net names), this returns every
+    component pin assigned to each net so you can see exactly what is connected
+    where. Reads directly from the schematic source - not the PCB - so results
+    are accurate even before the PCB has been updated from the schematic.
+
+    Returns a JSON object keyed by net name. Each value is a list of pin
+    references in DESIGNATOR-PIN format, e.g.:
+    {
+      "GND":  ["C1-2", "C2-2", "U1-8"],
+      "3V3":  ["C1-1", "R1-1", "U2-VCC"]
+    }
+    """
+    logger.info("Getting schematic connectivity")
+    response = await altium_bridge.execute_command("get_schematic_connectivity", {})
+    if not response.get("success", False):
+        error_msg = response.get("error", "Unknown error")
+        logger.error(f"Error getting schematic connectivity: {error_msg}")
+        return json.dumps({"error": f"Failed to get schematic connectivity: {error_msg}"})
+    return json.dumps(response.get("result", {}), indent=2)
 
 @mcp.tool()
 async def create_net_class(ctx: Context, class_name: str, net_names: list) -> str:
@@ -1131,6 +1156,31 @@ async def move_components(ctx: Context, cmp_designators: list, x_offset: float, 
     
     logger.info(f"Components moved successfully")
     return json.dumps({"success": True, "result": result}, indent=2)
+
+@mcp.tool()
+async def get_schematic_nets(ctx: Context) -> str:
+    """
+    Return every unique net name from all schematic documents in the active project.
+
+    Unlike get_all_nets (which reads the PCB), this reads net labels and power
+    symbols directly from the schematic source, so it works correctly even before
+    the PCB has been updated from the schematic.
+
+    Returns
+    -------
+    str :
+        A JSON array of unique net names, e.g. ["GND", "VCC33", "USB_D+", ...]
+    """
+    logger.info("Getting all schematic nets")
+
+    response = await altium_bridge.execute_command("get_schematic_nets", {})
+
+    if not response.get("success", False):
+        error_msg = response.get("error", "Unknown error")
+        logger.error(f"Error getting schematic nets: {error_msg}")
+        return json.dumps({"error": f"Failed to get schematic nets: {error_msg}"})
+
+    return json.dumps(response.get("result", []), indent=2)
 
 @mcp.tool()
 async def get_screenshot(ctx: Context, view_type: str = "pcb") -> str:

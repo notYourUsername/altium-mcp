@@ -1,4 +1,4 @@
-// altium_bridge.pas
+﻿// altium_bridge.pas
 // This script acts as a bridge between the MCP server and Altium
 // It reads commands from a request JSON file, executes them, and writes results to a response JSON file
 
@@ -16,7 +16,7 @@ var
 {..............................................................................}
 { Initialize file paths using a fixed exchange directory.                      }
 { Both the Python MCP server and this script independently resolve to          }
-{ C:\Users\Public\altium_mcp\ — avoiding fragile script-project-path          }
+{ C:\Users\Public\altium_mcp\ â€” avoiding fragile script-project-path          }
 { resolution that breaks when Altium caches stale script projects.             }
 {..............................................................................}
 procedure InitializeFilePaths();
@@ -719,7 +719,11 @@ begin
         'get_component_pins':
             Result := ExecuteGetComponentPins(RequestData);            
         'get_all_nets':
-            Result := GetAllNets(ROOT_DIR);            
+            Result := GetAllNets(ROOT_DIR);
+        'get_schematic_nets':
+            Result := GetSchematicNets(ROOT_DIR);
+        'get_schematic_connectivity':
+            Result := GetSchematicConnectivity(ROOT_DIR);            
         'create_net_class':
             Result := ExecuteCreateNetClass(RequestData);            
         'get_all_component_data':

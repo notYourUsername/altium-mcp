@@ -1,4 +1,4 @@
-// Helper function to convert string to pin electrical type
+﻿// Helper function to convert string to pin electrical type
 function StrToPinElectricalType(ElecType: String): TPinElectrical;
 begin
     if ElecType = 'eElectricHiZ' then
@@ -748,5 +748,340 @@ begin
         end;
     finally
         ComponentsArray.Free;
+    end;
+end;
+
+// Function to get all unique net names from all schematic documents in the project.
+// Pass 1: net labels (explicit signal wire names) - confirmed working.
+// Pass 2: compiled DM_ project netlist - catches power nets (GND, 3V3 etc.),
+//         wrapped in try-except so any failure falls back to net labels only.
+function FindPcbProject: IProject;
+// Finds the first non-script project (the .PrjPcb design project) in the workspace.
+var
+    Workspace : IWorkspace;
+    i         : Integer;
+    Proj      : IProject;
+    ProjPath  : String;
+begin
+    Result := Nil;
+    Workspace := GetWorkspace;
+    If (Workspace = Nil) Then Exit;
+
+    For i := 0 to Workspace.DM_ProjectCount - 1 Do
+    Begin
+        Proj := Workspace.DM_Projects(i);
+        If (Proj = Nil) Then Continue;
+        ProjPath := LowerCase(Proj.DM_ProjectFullPath);
+        If (Pos('.prjscr', ProjPath) = 0) And (Pos('free documents', ProjPath) = 0) Then
+        Begin
+            Result := Proj;
+            Exit;
+        End;
+    End;
+
+    If Result = Nil Then
+        Result := GetWorkspace.DM_FocusedProject;
+end;
+
+function GetSchematicNets(ROOT_DIR: String): String;
+// Returns all unique net names from the schematic source documents,
+// including power nets resolved via the compiled netlist.
+//
+// Pass 1: eNetLabel iterator   - named signal nets (fast, no compile needed)
+// Pass 2: DM_FlattenedNetName  - power nets and unnamed auto-nets
+//         Before calling DM_Compile we open the PCB document so Altium
+//         does not show a "No PCB document found" error dialog.
+var
+    Project    : IProject;
+    Doc        : IDocument;
+    CurrentSch : ISch_Document;
+    Iterator   : ISch_Iterator;
+    NetLabel   : ISch_NetLabel;
+    UniqueNets : TStringList;
+    NetsArray  : TStringList;
+    OutputLines: TStringList;
+    NetName    : String;
+    PcbDocPath : String;
+    DmComp     : Variant;
+    DmPin      : Variant;
+    DocCount   : Integer;
+    UsePhysical: Boolean;
+    j, k, i    : Integer;
+begin
+    Result := '';
+
+    Project := FindPcbProject;
+    If (Project = Nil) Then begin
+        ShowMessage('Error: No design project is currently open');
+        Exit;
+    end;
+
+    UniqueNets := TStringList.Create;
+    UniqueNets.Sorted := True;
+    UniqueNets.Duplicates := dupIgnore;
+
+    try
+        // ---------------------------------------------------------------
+        // Pass 1: explicit net labels on wires (no compile required)
+        // ---------------------------------------------------------------
+        PcbDocPath := '';
+        For i := 0 to Project.DM_LogicalDocumentCount - 1 Do
+        Begin
+            Doc := Project.DM_LogicalDocuments(i);
+            If Doc.DM_DocumentKind = 'SCH' Then
+            Begin
+                Client.OpenDocument('SCH', Doc.DM_FullPath);
+                CurrentSch := SchServer.GetSchDocumentByPath(Doc.DM_FullPath);
+                If (CurrentSch <> Nil) Then
+                Begin
+                    Iterator := CurrentSch.SchIterator_Create;
+                    Iterator.AddFilter_ObjectSet(MkSet(eNetLabel));
+                    NetLabel := Iterator.FirstSchObject;
+                    While (NetLabel <> Nil) Do
+                    Begin
+                        NetName := NetLabel.Text;
+                        If (NetName <> '') Then UniqueNets.Add(NetName);
+                        NetLabel := Iterator.NextSchObject;
+                    End;
+                    CurrentSch.SchIterator_Destroy(Iterator);
+                End;
+            End
+            Else If Doc.DM_DocumentKind = 'PCB' Then
+                PcbDocPath := Doc.DM_FullPath;
+        End;
+
+        // ---------------------------------------------------------------
+        // Pass 2: compiled physical-document netlist (power + auto nets)
+        // Only run if a PCB document exists in the project. Opening it first
+        // prevents Altium's "No PCB document found" dialog during DM_Compile.
+        // Schematic-only projects skip this pass and use Pass 1 results only.
+        // ---------------------------------------------------------------
+        try
+            If (PcbDocPath = '') Then
+            Begin
+                // No PCB doc - skip compile to avoid Altium dialog
+                // Pass 1 net labels are the full result for schematic-only projects
+            End
+            Else
+            Begin
+            Client.OpenDocument('PCB', PcbDocPath);
+
+            Project.DM_Compile;
+
+            DocCount := 0;
+            UsePhysical := False;
+            try DocCount := Project.DM_PhysicalDocumentCount; except end;
+            If DocCount > 0 Then
+                UsePhysical := True
+            Else
+                try DocCount := Project.DM_LogicalDocumentCount; except end;
+
+            For i := 0 to DocCount - 1 Do
+            Begin
+                If UsePhysical Then
+                    try Doc := Project.DM_PhysicalDocuments(i); except Doc := Nil; end
+                Else
+                    try Doc := Project.DM_LogicalDocuments(i); except Doc := Nil; end;
+
+                If Doc = Nil Then Continue;
+
+                For j := 0 to Doc.DM_ComponentCount - 1 Do
+                Begin
+                    try
+                        DmComp := Doc.DM_Components(j);
+                        If VarIsNull(DmComp) Or VarIsEmpty(DmComp) Then Continue;
+                        For k := 0 to DmComp.DM_PinCount - 1 Do
+                        Begin
+                            try
+                                DmPin := DmComp.DM_Pins(k);
+                                If VarIsNull(DmPin) Or VarIsEmpty(DmPin) Then Continue;
+                                NetName := DmPin.DM_FlattenedNetName;
+                                If (NetName <> '') And (NetName <> 'No Net') Then
+                                    UniqueNets.Add(NetName);
+                            except
+                            end;
+                        End;
+                    except
+                    end;
+                End;
+            End;
+            End; // PcbDocPath <> ''
+        except
+            // Compile failed - Pass 1 signal nets are still returned
+        end;
+
+        // ---------------------------------------------------------------
+        // Build JSON array output
+        // ---------------------------------------------------------------
+        NetsArray := TStringList.Create;
+        try
+            For i := 0 to UniqueNets.Count - 1 Do
+                NetsArray.Add('"' + UniqueNets[i] + '"');
+
+            OutputLines := TStringList.Create;
+            try
+                OutputLines.Text := BuildJSONArray(NetsArray);
+                Result := WriteJSONToFile(OutputLines, ROOT_DIR + 'temp_schematic_nets.json');
+            finally
+                OutputLines.Free;
+            end;
+        finally
+            NetsArray.Free;
+        end;
+    finally
+        UniqueNets.Free;
+    end;
+end;
+function GetSchematicConnectivity(ROOT_DIR: String): String;
+// Returns pin-by-pin connectivity grouped by net name.
+// JSON output: {"GND":["C1-2","U1-8"],"3V3":["C1-1","U2-VCC"],...}
+//
+// Data structure: PairList holds entries "NETNAME|DESIGNATOR-PIN".
+// After sorting this groups all pins per net together, making JSON easy to build.
+var
+    Project     : IProject;
+    Doc         : IDocument;
+    PcbDocPath  : String;
+    DmComp      : Variant;
+    DmPin       : Variant;
+    NetName     : String;
+    Designator  : String;
+    PinNum      : String;
+    PairList    : TStringList;
+    OutputLines : TStringList;
+    DocCount    : Integer;
+    UsePhysical : Boolean;
+    i, j, k     : Integer;
+    JSONStr     : String;
+    LastNet     : String;
+    Parts       : TStringList;
+    Entry       : String;
+    Sep         : Integer;
+    PinRef      : String;
+    IsFirstNet  : Boolean;
+    IsFirstPin  : Boolean;
+begin
+    Result := '';
+
+    Project := FindPcbProject;
+    If (Project = Nil) Then begin
+        ShowMessage('Error: No design project is currently open');
+        Exit;
+    end;
+
+    // "NET|PINREF" pairs - sorting groups pins by net
+    PairList := TStringList.Create;
+    PairList.Sorted := True;
+    PairList.Duplicates := dupIgnore;
+
+    try
+        // Open all SCH docs; record PCB path for pre-compile open
+        PcbDocPath := '';
+        For i := 0 to Project.DM_LogicalDocumentCount - 1 Do
+        Begin
+            Doc := Project.DM_LogicalDocuments(i);
+            If Doc.DM_DocumentKind = 'SCH' Then
+                Client.OpenDocument('SCH', Doc.DM_FullPath)
+            Else If Doc.DM_DocumentKind = 'PCB' Then
+                PcbDocPath := Doc.DM_FullPath;
+        End;
+
+        // Compile (open PCB first to suppress dialog)
+        If (PcbDocPath <> '') Then
+            Client.OpenDocument('PCB', PcbDocPath);
+        Project.DM_Compile;
+
+        // Walk physical (flattened) docs
+        DocCount := 0;
+        UsePhysical := False;
+        try DocCount := Project.DM_PhysicalDocumentCount; except end;
+        If DocCount > 0 Then UsePhysical := True
+        Else try DocCount := Project.DM_LogicalDocumentCount; except end;
+
+        For i := 0 to DocCount - 1 Do
+        Begin
+            If UsePhysical Then
+                try Doc := Project.DM_PhysicalDocuments(i); except Doc := Nil; end
+            Else
+                try Doc := Project.DM_LogicalDocuments(i); except Doc := Nil; end;
+            If Doc = Nil Then Continue;
+
+            For j := 0 to Doc.DM_ComponentCount - 1 Do
+            Begin
+                try
+                    DmComp := Doc.DM_Components(j);
+                    If VarIsNull(DmComp) Or VarIsEmpty(DmComp) Then Continue;
+                    try Designator := DmComp.DM_PhysicalDesignator; except Designator := ''; end;
+                    If Designator = '' Then
+                        try Designator := DmComp.DM_LogicalDesignator; except end;
+
+                    For k := 0 to DmComp.DM_PinCount - 1 Do
+                    Begin
+                        try
+                            DmPin := DmComp.DM_Pins(k);
+                            If VarIsNull(DmPin) Or VarIsEmpty(DmPin) Then Continue;
+                            NetName := DmPin.DM_FlattenedNetName;
+                            If (NetName = '') Or (NetName = 'No Net') Then Continue;
+                            PinNum  := DmPin.DM_PinNumber;
+                            PinRef  := Designator + '-' + PinNum;
+                            PairList.Add(NetName + '|' + PinRef);
+                        except
+                        end;
+                    End;
+                except
+                end;
+            End;
+        End;
+
+        // Build JSON object from sorted pairs
+        // Format: {"NET1":["C1-2","U1-8"],"NET2":[...]}
+        JSONStr    := '{';
+        LastNet    := '';
+        IsFirstNet := True;
+        IsFirstPin := True;
+        Parts      := TStringList.Create;
+        try
+            For i := 0 to PairList.Count - 1 Do
+            Begin
+                Entry := PairList[i];
+                // Split on first '|'
+                Sep := Pos('|', Entry);
+                If Sep = 0 Then Continue;
+                NetName := Copy(Entry, 1, Sep - 1);
+                PinRef  := Copy(Entry, Sep + 1, Length(Entry));
+
+                If NetName <> LastNet Then
+                Begin
+                    // Close previous net array
+                    If LastNet <> '' Then JSONStr := JSONStr + ']';
+                    // Open new net
+                    If Not IsFirstNet Then JSONStr := JSONStr + ',';
+                    JSONStr    := JSONStr + '"' + NetName + '":[';
+                    LastNet    := NetName;
+                    IsFirstNet := False;
+                    IsFirstPin := True;
+                End;
+
+                If Not IsFirstPin Then JSONStr := JSONStr + ',';
+                JSONStr    := JSONStr + '"' + PinRef + '"';
+                IsFirstPin := False;
+            End;
+
+            // Close last net array
+            If LastNet <> '' Then JSONStr := JSONStr + ']';
+            JSONStr := JSONStr + '}';
+
+            OutputLines := TStringList.Create;
+            try
+                OutputLines.Add(JSONStr);
+                Result := WriteJSONToFile(OutputLines, ROOT_DIR + 'temp_schematic_connectivity.json');
+            finally
+                OutputLines.Free;
+            end;
+        finally
+            Parts.Free;
+        end;
+    finally
+        PairList.Free;
     end;
 end;
