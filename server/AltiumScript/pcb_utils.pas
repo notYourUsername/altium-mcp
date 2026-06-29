@@ -354,6 +354,105 @@ begin
     end;
 end;
 
+// Function to update an existing Clearance Constraint rule's gap, found by name.
+// Params: rule_name, gap_mils.
+function ExecuteUpdateClearanceRule(RequestData: TStringList): String;
+var
+    i, ValueStart : Integer;
+    RuleName, ValStr : String;
+    GapMils : Double;
+    Board : IPCB_Board;
+    Iter  : IPCB_BoardIterator;
+    Rule, Found : IPCB_Rule;
+    ResultProps, OutputLines : TStringList;
+begin
+    RuleName := '';
+    GapMils := -1;
+
+    for i := 0 to RequestData.Count - 1 do
+    begin
+        if (Pos('"rule_name"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            RuleName := TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1));
+        end
+        else if (Pos('"gap_mils"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            ValStr := TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1));
+            ValStr := StringReplace(ValStr, ',', '', REPLACEALL);
+            GapMils := StrToFloatDef(ValStr, -1);
+        end;
+    end;
+
+    Board := PCBServer.GetCurrentPCBBoard;
+    if (Board = nil) then
+    begin
+        Result := '{"success": false, "error": "No PCB document is currently active"}';
+        Exit;
+    end;
+    if (RuleName = '') then
+    begin
+        Result := '{"success": false, "error": "No rule_name provided"}';
+        Exit;
+    end;
+    if (GapMils < 0) then
+    begin
+        Result := '{"success": false, "error": "No valid gap_mils provided"}';
+        Exit;
+    end;
+
+    Found := nil;
+    Iter := Board.BoardIterator_Create;
+    Iter.AddFilter_ObjectSet(MkSet(eRuleObject));
+    Iter.AddFilter_LayerSet(AllLayers);
+    Iter.AddFilter_Method(eProcessAll);
+    Rule := Iter.FirstPCBObject;
+    while (Rule <> nil) do
+    begin
+        if (Rule.Name = RuleName) then
+        begin
+            Found := Rule;
+            Break;
+        end;
+        Rule := Iter.NextPCBObject;
+    end;
+    Board.BoardIterator_Destroy(Iter);
+
+    if (Found = nil) then
+    begin
+        Result := '{"success": false, "error": "Rule not found"}';
+        Exit;
+    end;
+    if (Found.GetState_ShortDescriptorString <> 'Clearance Constraint') then
+    begin
+        Result := '{"success": false, "error": "Named rule is not a Clearance Constraint"}';
+        Exit;
+    end;
+
+    PCBServer.PreProcess;
+    Found.Gap := MMsToCoord(GapMils * 0.0254);
+    PCBServer.PostProcess;
+    Board.ViewManager_FullUpdate;
+
+    ResultProps := TStringList.Create;
+    try
+        AddJSONBoolean(ResultProps, 'success', True);
+        AddJSONProperty(ResultProps, 'rule_name', RuleName);
+        AddJSONProperty(ResultProps, 'rule_kind', 'Clearance');
+        AddJSONNumber(ResultProps, 'gap_mils', GapMils);
+        OutputLines := TStringList.Create;
+        try
+            OutputLines.Text := BuildJSONObject(ResultProps);
+            Result := OutputLines.Text;
+        finally
+            OutputLines.Free;
+        end;
+    finally
+        ResultProps.Free;
+    end;
+end;
+
 // Function to get routed copper length per net (sum of tracks + arcs)
 function GetNetsWithLength(ROOT_DIR): String;
 var

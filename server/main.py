@@ -1498,6 +1498,32 @@ async def get_pcb_rules(ctx: Context) -> str:
     return json.dumps(rules_data, indent=2)
 
 @mcp.tool()
+async def update_clearance_rule(ctx: Context, rule_name: str, gap_mils: float) -> str:
+    """
+    Update the gap of an existing Clearance Constraint design rule, found by name.
+
+    Args:
+        rule_name: Name of the existing clearance rule to modify.
+        gap_mils: New minimum clearance gap in mils.
+
+    Returns:
+        str: JSON object with the updated rule's details (or an error).
+    """
+    logger.info(f"Updating clearance rule {rule_name}")
+
+    response = await altium_bridge.execute_command(
+        "update_clearance_rule", {"rule_name": rule_name, "gap_mils": gap_mils}
+    )
+
+    if not response.get("success", False):
+        error_msg = response.get("error", "Unknown error")
+        logger.error(f"Error updating clearance rule: {error_msg}")
+        return json.dumps({"error": f"Failed to update clearance rule: {error_msg}"})
+
+    return json.dumps(response.get("result", {}), indent=2)
+
+
+@mcp.tool()
 async def create_clearance_rule(ctx: Context, rule_name: str, gap_mils: float,
                                 scope1: str = "All", scope2: str = "All") -> str:
     """
