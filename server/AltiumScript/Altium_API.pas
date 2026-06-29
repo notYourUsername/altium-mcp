@@ -750,6 +750,8 @@ begin
             Result := ExecuteCreateWidthRule(RequestData);
         'create_via_rule':
             Result := ExecuteCreateViaRule(RequestData);
+        'delete_design_rule':
+            Result := ExecuteDeleteDesignRule(RequestData);
         'run_drc':
             Result := RunDRC(ROOT_DIR);
         'get_drc_violations':

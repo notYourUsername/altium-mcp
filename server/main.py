@@ -1498,16 +1498,29 @@ async def get_pcb_rules(ctx: Context) -> str:
     return json.dumps(rules_data, indent=2)
 
 @mcp.tool()
-async def create_via_rule(ctx: Context, rule_name: str, via_diameter_mils: float,
-                          hole_diameter_mils: float, scope1: str = "All") -> str:
+async def create_via_rule(ctx: Context, rule_name: str,
+                          pad_min_mils: float, pad_max_mils: float, pad_preferred_mils: float,
+                          hole_min_mils: float, hole_max_mils: float, hole_preferred_mils: float,
+                          scope1: str = "All") -> str:
     """
-    Create a Routing Via Style design rule on the current Altium PCB.
+    Create a Routing Via Style design rule on the current Altium PCB, with
+    independent min/max/preferred sizes for the via pad (outer diameter) and the
+    hole (inner diameter).
+
+    Use the min/max to encode the fabrication house's allowed range (e.g. the fab's
+    minimum finished hole and minimum annular-ring-driven pad), and preferred to set
+    the target size you want the autorouter / manual routing to use. All six values
+    are written explicitly, so the rule never inherits Altium's default sizes.
 
     Args:
         rule_name: Name for the new rule.
-        via_diameter_mils: Via pad diameter in mils (sets min/max/preferred).
-        hole_diameter_mils: Via hole diameter in mils (sets min/max/preferred).
-        scope1: Scope as an Altium query (default "All").
+        pad_min_mils: Minimum via pad (outer) diameter in mils.
+        pad_max_mils: Maximum via pad diameter in mils.
+        pad_preferred_mils: Preferred via pad diameter in mils.
+        hole_min_mils: Minimum via hole (drill) diameter in mils.
+        hole_max_mils: Maximum via hole diameter in mils.
+        hole_preferred_mils: Preferred via hole diameter in mils.
+        scope1: Scope as an Altium query (default "All", e.g. "InNet('GND')").
 
     Returns:
         str: JSON object with the created rule's details (or an error).
@@ -1516,14 +1529,45 @@ async def create_via_rule(ctx: Context, rule_name: str, via_diameter_mils: float
 
     response = await altium_bridge.execute_command(
         "create_via_rule",
-        {"rule_name": rule_name, "via_diameter_mils": via_diameter_mils,
-         "hole_diameter_mils": hole_diameter_mils, "scope1": scope1},
+        {"rule_name": rule_name,
+         "pad_min_mils": pad_min_mils, "pad_max_mils": pad_max_mils,
+         "pad_preferred_mils": pad_preferred_mils,
+         "hole_min_mils": hole_min_mils, "hole_max_mils": hole_max_mils,
+         "hole_preferred_mils": hole_preferred_mils,
+         "scope1": scope1},
     )
 
     if not response.get("success", False):
         error_msg = response.get("error", "Unknown error")
         logger.error(f"Error creating via rule: {error_msg}")
         return json.dumps({"error": f"Failed to create via rule: {error_msg}"})
+
+    return json.dumps(response.get("result", {}), indent=2)
+
+
+@mcp.tool()
+async def delete_design_rule(ctx: Context, rule_name: str) -> str:
+    """
+    Delete a single design rule from the current Altium PCB, matched by its exact
+    name. Useful for cleaning up test or superseded rules.
+
+    Args:
+        rule_name: Exact name of the rule to delete (case-sensitive match).
+
+    Returns:
+        str: JSON object confirming the deleted rule (name + kind), or an error if
+             no rule with that exact name exists.
+    """
+    logger.info(f"Deleting design rule {rule_name}")
+
+    response = await altium_bridge.execute_command(
+        "delete_design_rule", {"rule_name": rule_name}
+    )
+
+    if not response.get("success", False):
+        error_msg = response.get("error", "Unknown error")
+        logger.error(f"Error deleting design rule: {error_msg}")
+        return json.dumps({"error": f"Failed to delete design rule: {error_msg}"})
 
     return json.dumps(response.get("result", {}), indent=2)
 

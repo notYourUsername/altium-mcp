@@ -563,21 +563,27 @@ begin
 end;
 
 // Function to create a Routing Via Style design rule.
-// Params: rule_name, scope1 (default All), via_diameter_mils, hole_diameter_mils.
-// (Via width/hole limits mirror the width rule's "Favored" naming for preferred.)
+// Params: rule_name, scope1 (default All), and independent pad + hole limits:
+//   pad_min_mils, pad_max_mils, pad_preferred_mils,
+//   hole_min_mils, hole_max_mils, hole_preferred_mils.
+// Pad limits map to MinWidth/MaxWidth/PreferedWidth (outer via diameter);
+// hole limits map to MinHoleWidth/MaxHoleWidth/PreferedHoleWidth. All three of
+// each are set explicitly so the rule does not inherit Altium's defaults.
 function ExecuteCreateViaRule(RequestData: TStringList): String;
 var
     i, ValueStart : Integer;
     RuleName, Scope1, ValStr : String;
-    ViaDiaMils, HoleDiaMils : Double;
+    PadMin, PadMax, PadPref : Double;
+    HoleMin, HoleMax, HolePref : Double;
     Board : IPCB_Board;
     Rule  : IPCB_Rule;
     ResultProps, OutputLines : TStringList;
 begin
     RuleName := '';
     Scope1 := 'All';
-    ViaDiaMils := 24;
-    HoleDiaMils := 12;
+    // Sensible fallbacks (mils); the MCP tool always supplies explicit values.
+    PadMin := 24;  PadMax := 24;  PadPref := 24;
+    HoleMin := 12; HoleMax := 12; HolePref := 12;
 
     for i := 0 to RequestData.Count - 1 do
     begin
@@ -591,17 +597,41 @@ begin
             ValueStart := Pos(':', RequestData[i]) + 1;
             Scope1 := TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1));
         end
-        else if (Pos('"via_diameter_mils"', RequestData[i]) > 0) then
+        else if (Pos('"pad_min_mils"', RequestData[i]) > 0) then
         begin
             ValueStart := Pos(':', RequestData[i]) + 1;
             ValStr := StringReplace(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), ',', '', REPLACEALL);
-            ViaDiaMils := StrToFloatDef(ValStr, 24);
+            PadMin := StrToFloatDef(ValStr, PadMin);
         end
-        else if (Pos('"hole_diameter_mils"', RequestData[i]) > 0) then
+        else if (Pos('"pad_max_mils"', RequestData[i]) > 0) then
         begin
             ValueStart := Pos(':', RequestData[i]) + 1;
             ValStr := StringReplace(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), ',', '', REPLACEALL);
-            HoleDiaMils := StrToFloatDef(ValStr, 12);
+            PadMax := StrToFloatDef(ValStr, PadMax);
+        end
+        else if (Pos('"pad_preferred_mils"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            ValStr := StringReplace(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), ',', '', REPLACEALL);
+            PadPref := StrToFloatDef(ValStr, PadPref);
+        end
+        else if (Pos('"hole_min_mils"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            ValStr := StringReplace(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), ',', '', REPLACEALL);
+            HoleMin := StrToFloatDef(ValStr, HoleMin);
+        end
+        else if (Pos('"hole_max_mils"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            ValStr := StringReplace(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), ',', '', REPLACEALL);
+            HoleMax := StrToFloatDef(ValStr, HoleMax);
+        end
+        else if (Pos('"hole_preferred_mils"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            ValStr := StringReplace(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), ',', '', REPLACEALL);
+            HolePref := StrToFloatDef(ValStr, HolePref);
         end;
     end;
 
@@ -622,12 +652,14 @@ begin
     Rule.Name := RuleName;
     Rule.Scope1Expression := Scope1;
     Rule.Scope2Expression := 'All';
-    // Via pad diameter (min = max = requested -> a fixed via size)
-    Rule.MinWidth := MMsToCoord(ViaDiaMils * 0.0254);
-    Rule.MaxWidth := MMsToCoord(ViaDiaMils * 0.0254);
-    // Via hole diameter
-    Rule.MinHoleWidth := MMsToCoord(HoleDiaMils * 0.0254);
-    Rule.MaxHoleWidth := MMsToCoord(HoleDiaMils * 0.0254);
+    // Via pad (outer) diameter: min / max / preferred (mils -> internal coords)
+    Rule.MinWidth := MMsToCoord(PadMin * 0.0254);
+    Rule.MaxWidth := MMsToCoord(PadMax * 0.0254);
+    Rule.PreferedWidth := MMsToCoord(PadPref * 0.0254);
+    // Via hole (inner) diameter: min / max / preferred
+    Rule.MinHoleWidth := MMsToCoord(HoleMin * 0.0254);
+    Rule.MaxHoleWidth := MMsToCoord(HoleMax * 0.0254);
+    Rule.PreferedHoleWidth := MMsToCoord(HolePref * 0.0254);
     Rule.DRCEnabled := True;
     Board.AddPCBObject(Rule);
     PCBServer.SendMessageToRobots(Rule.I_ObjectAddress, c_Broadcast, PCBM_BoardRegisteration, c_NoEventData);
@@ -639,8 +671,95 @@ begin
         AddJSONProperty(ResultProps, 'rule_name', RuleName);
         AddJSONProperty(ResultProps, 'rule_kind', 'RoutingVias');
         AddJSONProperty(ResultProps, 'scope1', Scope1);
-        AddJSONNumber(ResultProps, 'via_diameter_mils', ViaDiaMils);
-        AddJSONNumber(ResultProps, 'hole_diameter_mils', HoleDiaMils);
+        AddJSONNumber(ResultProps, 'pad_min_mils', PadMin);
+        AddJSONNumber(ResultProps, 'pad_max_mils', PadMax);
+        AddJSONNumber(ResultProps, 'pad_preferred_mils', PadPref);
+        AddJSONNumber(ResultProps, 'hole_min_mils', HoleMin);
+        AddJSONNumber(ResultProps, 'hole_max_mils', HoleMax);
+        AddJSONNumber(ResultProps, 'hole_preferred_mils', HolePref);
+        OutputLines := TStringList.Create;
+        try
+            OutputLines.Text := BuildJSONObject(ResultProps);
+            Result := OutputLines.Text;
+        finally
+            OutputLines.Free;
+        end;
+    finally
+        ResultProps.Free;
+    end;
+end;
+
+// Function to delete a design rule by its exact name.
+// Params: rule_name. Removes the single rule whose Name matches exactly.
+function ExecuteDeleteDesignRule(RequestData: TStringList): String;
+var
+    i, ValueStart : Integer;
+    RuleName, DeletedKind : String;
+    Board : IPCB_Board;
+    Iter  : IPCB_BoardIterator;
+    Rule, Found : IPCB_Rule;
+    ResultProps, OutputLines : TStringList;
+begin
+    RuleName := '';
+
+    for i := 0 to RequestData.Count - 1 do
+    begin
+        if (Pos('"rule_name"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            RuleName := TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1));
+        end;
+    end;
+
+    Board := PCBServer.GetCurrentPCBBoard;
+    if (Board = nil) then
+    begin
+        Result := '{"success": false, "error": "No PCB document is currently active"}';
+        Exit;
+    end;
+    if (RuleName = '') then
+    begin
+        Result := '{"success": false, "error": "No rule_name provided"}';
+        Exit;
+    end;
+
+    Found := nil;
+    Iter := Board.BoardIterator_Create;
+    Iter.AddFilter_ObjectSet(MkSet(eRuleObject));
+    Iter.AddFilter_LayerSet(AllLayers);
+    Iter.AddFilter_Method(eProcessAll);
+    Rule := Iter.FirstPCBObject;
+    while (Rule <> nil) do
+    begin
+        if (Rule.Name = RuleName) then
+        begin
+            Found := Rule;
+            Break;
+        end;
+        Rule := Iter.NextPCBObject;
+    end;
+    Board.BoardIterator_Destroy(Iter);
+
+    if (Found = nil) then
+    begin
+        Result := '{"success": false, "error": "Rule not found"}';
+        Exit;
+    end;
+
+    // Capture identifying info before the object is removed.
+    DeletedKind := Found.GetState_ShortDescriptorString;
+
+    PCBServer.PreProcess;
+    Board.RemovePCBObject(Found);
+    PCBServer.SendMessageToRobots(Board.I_ObjectAddress, c_Broadcast, PCBM_BoardRegisteration, c_NoEventData);
+    PCBServer.PostProcess;
+    Board.ViewManager_FullUpdate;
+
+    ResultProps := TStringList.Create;
+    try
+        AddJSONBoolean(ResultProps, 'success', True);
+        AddJSONProperty(ResultProps, 'rule_name', RuleName);
+        AddJSONProperty(ResultProps, 'deleted_rule_kind', DeletedKind);
         OutputLines := TStringList.Create;
         try
             OutputLines.Text := BuildJSONObject(ResultProps);
