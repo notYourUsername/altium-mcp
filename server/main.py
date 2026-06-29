@@ -20,6 +20,8 @@ import base64
 import glob
 import re
 
+from bom import build_bom
+
 # Configure logging
 logging.basicConfig(
     level=logging.DEBUG,  # Change to DEBUG for more detailed logs
@@ -1440,6 +1442,36 @@ async def get_pcb_rules(ctx: Context) -> str:
     
     logger.info(f"Retrieved PCB rules data")
     return json.dumps(rules_data, indent=2)
+
+@mcp.tool()
+async def get_bom(ctx: Context) -> str:
+    """
+    Export a grouped Bill of Materials (BOM) for the current Altium PCB.
+    Components are grouped by (description, footprint); each line lists the
+    quantity and the designators. Built from get_all_component_data.
+
+    Returns:
+        str: JSON object with total_components, total_lines, and a bom array
+    """
+    logger.info("Getting BOM")
+
+    response = await altium_bridge.execute_command("get_all_component_data", {})
+
+    if not response.get("success", False):
+        error_msg = response.get("error", "Unknown error")
+        logger.error(f"Error getting component data for BOM: {error_msg}")
+        return json.dumps({"error": f"Failed to get BOM: {error_msg}"})
+
+    components = response.get("result", [])
+    if isinstance(components, str):
+        try:
+            components = json.loads(components)
+        except Exception:
+            components = []
+
+    logger.info("Built BOM")
+    return json.dumps(build_bom(components), indent=2)
+
 
 @mcp.tool()
 async def get_nets_with_length(ctx: Context) -> str:

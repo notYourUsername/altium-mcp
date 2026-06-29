@@ -1,0 +1,8 @@
+{
+  "total_components": 3,
+  "total_lines": 2,
+  "bom": [
+    { "description": "10k 0402 resistor", "footprint": "R0402", "quantity": 2, "designators": ["R2", "R10"] },
+    { "description": "100nF 0402 capacitor", "footprint": "C0402", "quantity": 1, "designators": ["C1"] }
+  ]
+}
