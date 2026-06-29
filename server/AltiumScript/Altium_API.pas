@@ -738,6 +738,10 @@ begin
             Result := ExecuteSetPCBLayerVisibility(RequestData);   
         'get_pcb_layer_stackup':
             Result := GetPCBLayerStackup(ROOT_DIR);         
+        'get_board_info':
+            Result := GetBoardInfo(ROOT_DIR);
+        'get_nets_with_length':
+            Result := GetNetsWithLength(ROOT_DIR);
         'get_selected_components_coordinates':
             Result := GetSelectedComponentsCoordinates(ROOT_DIR); 
 		'set_component_position':

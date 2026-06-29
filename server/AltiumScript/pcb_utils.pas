@@ -143,6 +143,208 @@ begin
     end;
 end;
 
+// Function to get routed copper length per net (sum of tracks + arcs)
+function GetNetsWithLength(ROOT_DIR): String;
+var
+    Board       : IPCB_Board;
+    Iterator    : IPCB_BoardIterator;
+    Prim        : IPCB_Primitive;
+    Track       : IPCB_Track;
+    Arc         : IPCB_Arc;
+    NetObj      : IPCB_Net;
+    NetLengths  : TStringList;
+    NetArray    : TStringList;
+    Props       : TStringList;
+    ResultProps : TStringList;
+    OutputLines : TStringList;
+    i           : Integer;
+    netName     : String;
+    addLen      : Double;
+    dx, dy      : Double;
+    sweep       : Double;
+    cur         : Integer;
+    totalCoord  : Integer;
+begin
+    Result := '';
+
+    Board := PCBServer.GetCurrentPCBBoard;
+    if (Board = nil) then
+    begin
+        Result := '{"error": "No PCB document is currently active"}';
+        Exit;
+    end;
+
+    NetLengths := TStringList.Create;
+    try
+        // Accumulate routed length per net as INTEGER internal coords stored in a
+        // TStringList (name=value). Integers avoid the locale-sensitive float<->string
+        // round-trip that previously produced 'NAN'. addLen is guarded for NaN before
+        // rounding. 1 mil = 10000 coords, so Integer holds far more than any net length.
+        Iterator := Board.BoardIterator_Create;
+        Iterator.AddFilter_ObjectSet(MkSet(eTrackObject, eArcObject));
+        Iterator.AddFilter_LayerSet(AllLayers);
+        Iterator.AddFilter_Method(eProcessAll);
+        Prim := Iterator.FirstPCBObject;
+        while (Prim <> nil) do
+        begin
+            addLen := 0;
+            NetObj := nil;
+            if (Prim.ObjectId = eTrackObject) then
+            begin
+                Track := Prim;
+                NetObj := Track.Net;
+                dx := Track.x2 - Track.x1;
+                dy := Track.y2 - Track.y1;
+                addLen := Sqrt(dx * dx + dy * dy);
+            end
+            else if (Prim.ObjectId = eArcObject) then
+            begin
+                Arc := Prim;
+                NetObj := Arc.Net;
+                sweep := Arc.EndAngle - Arc.StartAngle;
+                if (sweep < 0) then sweep := sweep + 360;
+                addLen := 2 * 3.14159265358979 * Arc.Radius * (sweep / 360);
+            end;
+
+            // Guard against NaN/invalid contributions
+            if (addLen <> addLen) then addLen := 0;
+
+            if (NetObj <> nil) then
+            begin
+                netName := NetObj.Name;
+                cur := StrToIntDef(NetLengths.Values[netName], 0);
+                NetLengths.Values[netName] := IntToStr(cur + Round(addLen));
+            end;
+
+            Prim := Iterator.NextPCBObject;
+        end;
+        Board.BoardIterator_Destroy(Iterator);
+
+        // Emit one entry per net with routed copper
+        NetArray := TStringList.Create;
+        try
+            for i := 0 to NetLengths.Count - 1 do
+            begin
+                netName := NetLengths.Names[i];
+                totalCoord := StrToIntDef(NetLengths.Values[netName], 0);
+                Props := TStringList.Create;
+                try
+                    AddJSONProperty(Props, 'net', netName);
+                    AddJSONNumber(Props, 'length_mils', totalCoord / 10000);
+                    AddJSONNumber(Props, 'length_mm', (totalCoord / 10000) * 0.0254);
+                    NetArray.Add(BuildJSONObject(Props, 1));
+                finally
+                    Props.Free;
+                end;
+            end;
+
+            ResultProps := TStringList.Create;
+            try
+                AddJSONInteger(ResultProps, 'total_routed_nets', NetArray.Count);
+                ResultProps.Add(BuildJSONArray(NetArray, 'nets'));
+                OutputLines := TStringList.Create;
+                try
+                    OutputLines.Text := BuildJSONObject(ResultProps);
+                    Result := WriteJSONToFile(OutputLines, ROOT_DIR+'\temp_nets_length.json');
+                finally
+                    OutputLines.Free;
+                end;
+            finally
+                ResultProps.Free;
+            end;
+        finally
+            NetArray.Free;
+        end;
+    finally
+        NetLengths.Free;
+    end;
+end;
+
+// Function to get board-level summary info (size, origin, layers, thickness, units)
+function GetBoardInfo(ROOT_DIR): String;
+var
+    Board          : IPCB_Board;
+    TheLayerStack  : IPCB_LayerStack_V7;
+    LayerObject    : IPCB_LayerObject;
+    DielObj        : IPCB_DielectricObject;
+    Props          : TStringList;
+    OutputLines    : TStringList;
+    BR             : TCoordRect;
+    wCoord, hCoord : Integer;
+    TotalThk       : Double;
+begin
+    Result := '';
+
+    Board := PCBServer.GetCurrentPCBBoard;
+    if (Board = nil) then
+    begin
+        Result := '{"error": "No PCB document is currently active"}';
+        Exit;
+    end;
+
+    Props := TStringList.Create;
+    try
+        AddJSONProperty(Props, 'board_name', ExtractFileName(Board.FileName));
+
+        // Display unit
+        if (Board.DisplayUnit = eImperial) then
+            AddJSONProperty(Props, 'display_unit', 'mil')
+        else
+            AddJSONProperty(Props, 'display_unit', 'mm');
+
+        // Board outline bounding box (use Altium's unit-correct converters)
+        if (Board.BoardOutline <> nil) then
+        begin
+            BR := Board.BoardOutline.BoundingRectangle;
+            wCoord := BR.Right - BR.Left;
+            hCoord := BR.Top - BR.Bottom;
+            AddJSONNumber(Props, 'width_mm', CoordToMMs(wCoord));
+            AddJSONNumber(Props, 'height_mm', CoordToMMs(hCoord));
+            AddJSONNumber(Props, 'width_mils', CoordToMils(wCoord));
+            AddJSONNumber(Props, 'height_mils', CoordToMils(hCoord));
+        end;
+
+        // Origin
+        AddJSONNumber(Props, 'origin_x_mm', CoordToMMs(Board.XOrigin));
+        AddJSONNumber(Props, 'origin_y_mm', CoordToMMs(Board.YOrigin));
+        AddJSONNumber(Props, 'origin_x_mils', CoordToMils(Board.XOrigin));
+        AddJSONNumber(Props, 'origin_y_mils', CoordToMils(Board.YOrigin));
+
+        // Layer count + total physical thickness (copper + dielectric)
+        TheLayerStack := Board.LayerStack_V7;
+        TotalThk := 0;
+        if (TheLayerStack <> nil) then
+        begin
+            AddJSONInteger(Props, 'signal_layer_count', TheLayerStack.SignalLayerCount);
+            LayerObject := TheLayerStack.FirstLayer;
+            while (LayerObject <> nil) do
+            begin
+                TotalThk := TotalThk + (LayerObject.CopperThickness / 10000);
+                DielObj := LayerObject.Dielectric;
+                if (LayerObject <> TheLayerStack.LastLayer) and (DielObj <> nil) then
+                    TotalThk := TotalThk + (DielObj.DielectricHeight / 10000);
+                if (LayerObject = TheLayerStack.LastLayer) then Break;
+                LayerObject := TheLayerStack.NextLayer(LayerObject);
+            end;
+        end
+        else
+            AddJSONInteger(Props, 'signal_layer_count', 0);
+
+        AddJSONNumber(Props, 'total_thickness_mils', TotalThk);
+        AddJSONNumber(Props, 'total_thickness_mm', TotalThk * 0.0254);
+
+        OutputLines := TStringList.Create;
+        try
+            OutputLines.Text := BuildJSONObject(Props);
+            Result := WriteJSONToFile(OutputLines, ROOT_DIR+'\temp_board_info.json');
+        finally
+            OutputLines.Free;
+        end;
+    finally
+        Props.Free;
+    end;
+end;
+
 // Function to get detailed layer stackup information
 function GetPCBLayerStackup(ROOT_DIR): String;
 var

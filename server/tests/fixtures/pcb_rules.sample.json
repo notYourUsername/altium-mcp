@@ -1,0 +1,14 @@
+[
+  { "descriptor": "Clearance Constraint (Gap=10mil) (All),(All)", "rule_kind": "Clearance Constraint", "filter1": "All", "filter2": "All" },
+  { "descriptor": "Width Constraint (Min=5.984mil) (Max=20mil) (Preferred=10mil) (All)", "rule_kind": "Width Constraint", "filter1": "All", "filter2": "All" },
+  { "descriptor": "Width Constraint (Min=10mil) (Max=13mil) (Preferred=13mil) (InNet('NetL4_2') or InNet('NetC31_2') or InNet('NetC30_2'))", "rule_kind": "Width Constraint", "filter1": "InNet('NetL4_2') or InNet('NetC31_2') or InNet('NetC30_2')", "filter2": "All" },
+  { "descriptor": "Matched Lengths(Tolerance=10mil) (InNetClass('USB'))", "rule_kind": "Matched Net Lengths", "filter1": "InNetClass('USB')", "filter2": "All" },
+  { "descriptor": "Impedance (Minimum=85.00Ohms Maximum=95.00Ohms)", "rule_kind": "Impedance Constraint", "filter1": "InNetClass('USB')", "filter2": "All" },
+  { "descriptor": "Differential Pairs Uncoupled Length using the Gap Constraints (Min=7mil) (Max=10mil) (Prefered=10mil)  and Width Constraints (Min=10mil) (Max=15mil) (Prefered=15mil) (InDifferentialPairClass('USB_Lines'))", "rule_kind": "Differential Pairs Routing", "filter1": "InDifferentialPairClass('USB_Lines')", "filter2": "All" },
+  { "descriptor": "Hole Size Constraint (Min=0.984mil) (Max=122.047mil) (All)", "rule_kind": "Hole Size Constraint", "filter1": "All", "filter2": "All" },
+  { "descriptor": "Routing Via (MinHoleWidth=11.811mil) (MaxHoleWidth=11.811mil) (PreferredHoleWidth=11.811mil) (MinWidth=23.622mil) (MaxWidth=23.622mil) (PreferedWidth=23.622mil) (All)", "rule_kind": "Routing Via Style", "filter1": "All", "filter2": "All" },
+  { "descriptor": "Hole To Hole Clearance (Gap=10mil) (All),(All)", "rule_kind": "Hole To Hole Clearance Constraint", "filter1": "All", "filter2": "All" },
+  { "descriptor": "Short-Circuit Constraint (Allowed=No) (All),(All)", "rule_kind": "Short-Circuit Constraint", "filter1": "All", "filter2": "All" },
+  { "descriptor": "Un-Routed Net Constraint ( (All) )", "rule_kind": "Un-Routed Net Constraint", "filter1": "All", "filter2": "All" },
+  { "descriptor": "Room U_Power_Sheet (Bounding Region = (0mil, 0mil, 2000mil, 1000mil) (InComponentClass('U_Power_Sheet'))", "rule_kind": "Room Definition", "filter1": "InComponentClass('U_Power_Sheet')", "filter2": "All" }
+]

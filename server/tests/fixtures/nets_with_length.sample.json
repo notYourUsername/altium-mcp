@@ -1,0 +1,11 @@
+{
+  "total_routed_nets": 51,
+  "nets": [
+    { "net": "GND", "length_mils": 72.1232, "length_mm": 1.83192928 },
+    { "net": "CAN1_N", "length_mils": 24.732, "length_mm": 0.6281928 },
+    { "net": "CAN1_P", "length_mils": 24.7378, "length_mm": 0.62834012 },
+    { "net": "USB_D_P", "length_mils": 28.0536, "length_mm": 0.71256144 },
+    { "net": "USB_D_N", "length_mils": 21.9681, "length_mm": 0.55798974 },
+    { "net": "NetL4_2", "length_mils": 0, "length_mm": 0 }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "copper_layers_count": 4,
+  "signal_layers_count": 4,
+  "internal_planes_count": 0,
+  "mechanical_layers_count": 33,
+  "copper_layers": [
+    { "name": "Top Layer", "layer_id": "1", "layer_type": "copper", "is_signal": true, "is_plane": false, "is_displayed": true, "is_enabled": true, "color": "clRed" },
+    { "name": "GND", "layer_id": "2", "layer_type": "copper", "is_signal": true, "is_plane": false, "is_displayed": true, "is_enabled": true, "color": "$00008EBC" },
+    { "name": "PWR", "layer_id": "3", "layer_type": "copper", "is_signal": true, "is_plane": false, "is_displayed": true, "is_enabled": true, "color": "$00FADB70" },
+    { "name": "Bottom Layer", "layer_id": "32", "layer_type": "copper", "is_signal": true, "is_plane": false, "is_displayed": true, "is_enabled": true, "color": "clBlue" }
+  ],
+  "mechanical_layers": [
+    { "name": "Board", "layer_id": "57", "layer_type": "mechanical", "mechanical_number": "1", "is_displayed": true, "is_enabled": true, "link_to_sheet": false, "is_paired": false, "color": "clFuchsia" },
+    { "name": "FAB", "layer_id": "58", "layer_type": "mechanical", "mechanical_number": "2", "is_displayed": true, "is_enabled": true, "link_to_sheet": false, "is_paired": false, "color": "clPurple" },
+    { "name": "Mechanical 15", "layer_id": "71", "layer_type": "mechanical", "mechanical_number": "15", "is_displayed": true, "is_enabled": true, "link_to_sheet": false, "is_paired": false, "color": "clGreen" }
+  ],
+  "special_layers": [
+    { "name": "Top Overlay", "layer_id": "33", "layer_type": "special", "special_type": "overlay", "is_displayed": true, "color": "clYellow" },
+    { "name": "Top Solder Mask", "layer_id": "37", "layer_type": "special", "special_type": "solder_mask", "is_displayed": true, "color": "clPurple" },
+    { "name": "Top Paste", "layer_id": "35", "layer_type": "special", "special_type": "paste", "is_displayed": true, "color": "clGray" },
+    { "name": "Keep Out Layer", "layer_id": "56", "layer_type": "special", "special_type": "keepout", "is_displayed": true, "color": "clFuchsia" }
+  ]
+}
