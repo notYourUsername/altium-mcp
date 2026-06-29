@@ -1500,6 +1500,11 @@ async def run_drc(ctx: Context) -> str:
     resulting violations, each with its name/description and location (x/y in mm and
     mils). Use this for an on-demand "check my board". The report window is suppressed.
 
+    Note: repours all polygons first (a board modification, applied as a single
+    undoable step) so the DRC is accurate and runs without Altium's repour prompt.
+    For a non-modifying check, run the DRC manually in Altium and use
+    get_drc_violations instead.
+
     Returns:
         str: JSON object with total_violations and a violations array
     """

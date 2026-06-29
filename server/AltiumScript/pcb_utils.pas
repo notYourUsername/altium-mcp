@@ -221,6 +221,8 @@ function RunDRC(ROOT_DIR): String;
 var
     Board  : IPCB_Board;
     PCBDoc : IServerDocument;
+    Iter   : IPCB_BoardIterator;
+    Poly   : IPCB_Polygon;
 begin
     Result := '';
 
@@ -237,6 +239,27 @@ begin
     PCBDoc := Client.GetDocumentByPath(Board.FileName);
     if (PCBDoc <> nil) then
         Client.ShowDocument(PCBDoc);
+
+    // Repour all polygons first so the DRC is accurate and Altium does not prompt
+    // about unrepoured polygons (this is what enables a headless run). This MODIFIES
+    // the board; wrapped in PreProcess/PostProcess so it is a single undoable step.
+    PCBServer.PreProcess;
+    try
+        Iter := Board.BoardIterator_Create;
+        Iter.AddFilter_ObjectSet(MkSet(ePolyObject));
+        Iter.AddFilter_LayerSet(AllLayers);
+        Iter.AddFilter_Method(eProcessAll);
+        Poly := Iter.FirstPCBObject;
+        while (Poly <> nil) do
+        begin
+            Poly.Rebuild;
+            Poly := Iter.NextPCBObject;
+        end;
+        Board.BoardIterator_Destroy(Iter);
+    finally
+        PCBServer.PostProcess;
+    end;
+    Board.ViewManager_FullUpdate;
 
     Board.RunBatchDesignRuleCheck(ROOT_DIR + '\temp_drc_report.html', 0, False, False);
 
