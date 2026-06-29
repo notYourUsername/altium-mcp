@@ -1498,6 +1498,37 @@ async def get_pcb_rules(ctx: Context) -> str:
     return json.dumps(rules_data, indent=2)
 
 @mcp.tool()
+async def create_via_rule(ctx: Context, rule_name: str, via_diameter_mils: float,
+                          hole_diameter_mils: float, scope1: str = "All") -> str:
+    """
+    Create a Routing Via Style design rule on the current Altium PCB.
+
+    Args:
+        rule_name: Name for the new rule.
+        via_diameter_mils: Via pad diameter in mils (sets min/max/preferred).
+        hole_diameter_mils: Via hole diameter in mils (sets min/max/preferred).
+        scope1: Scope as an Altium query (default "All").
+
+    Returns:
+        str: JSON object with the created rule's details (or an error).
+    """
+    logger.info(f"Creating via rule {rule_name}")
+
+    response = await altium_bridge.execute_command(
+        "create_via_rule",
+        {"rule_name": rule_name, "via_diameter_mils": via_diameter_mils,
+         "hole_diameter_mils": hole_diameter_mils, "scope1": scope1},
+    )
+
+    if not response.get("success", False):
+        error_msg = response.get("error", "Unknown error")
+        logger.error(f"Error creating via rule: {error_msg}")
+        return json.dumps({"error": f"Failed to create via rule: {error_msg}"})
+
+    return json.dumps(response.get("result", {}), indent=2)
+
+
+@mcp.tool()
 async def create_width_rule(ctx: Context, rule_name: str, min_mils: float, max_mils: float,
                             preferred_mils: float, scope1: str = "All") -> str:
     """

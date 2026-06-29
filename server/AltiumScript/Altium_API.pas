@@ -748,6 +748,8 @@ begin
             Result := ExecuteUpdateClearanceRule(RequestData);
         'create_width_rule':
             Result := ExecuteCreateWidthRule(RequestData);
+        'create_via_rule':
+            Result := ExecuteCreateViaRule(RequestData);
         'run_drc':
             Result := RunDRC(ROOT_DIR);
         'get_drc_violations':

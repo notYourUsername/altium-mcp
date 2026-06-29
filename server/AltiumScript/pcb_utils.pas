@@ -562,6 +562,97 @@ begin
     end;
 end;
 
+// Function to create a Routing Via Style design rule.
+// Params: rule_name, scope1 (default All), via_diameter_mils, hole_diameter_mils.
+// (Via width/hole limits mirror the width rule's "Favored" naming for preferred.)
+function ExecuteCreateViaRule(RequestData: TStringList): String;
+var
+    i, ValueStart : Integer;
+    RuleName, Scope1, ValStr : String;
+    ViaDiaMils, HoleDiaMils : Double;
+    Board : IPCB_Board;
+    Rule  : IPCB_Rule;
+    ResultProps, OutputLines : TStringList;
+begin
+    RuleName := '';
+    Scope1 := 'All';
+    ViaDiaMils := 24;
+    HoleDiaMils := 12;
+
+    for i := 0 to RequestData.Count - 1 do
+    begin
+        if (Pos('"rule_name"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            RuleName := TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1));
+        end
+        else if (Pos('"scope1"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            Scope1 := TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1));
+        end
+        else if (Pos('"via_diameter_mils"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            ValStr := StringReplace(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), ',', '', REPLACEALL);
+            ViaDiaMils := StrToFloatDef(ValStr, 24);
+        end
+        else if (Pos('"hole_diameter_mils"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            ValStr := StringReplace(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), ',', '', REPLACEALL);
+            HoleDiaMils := StrToFloatDef(ValStr, 12);
+        end;
+    end;
+
+    Board := PCBServer.GetCurrentPCBBoard;
+    if (Board = nil) then
+    begin
+        Result := '{"success": false, "error": "No PCB document is currently active"}';
+        Exit;
+    end;
+    if (RuleName = '') then
+    begin
+        Result := '{"success": false, "error": "No rule_name provided"}';
+        Exit;
+    end;
+
+    PCBServer.PreProcess;
+    Rule := PCBServer.PCBRuleFactory(eRule_RoutingViaStyle);
+    Rule.Name := RuleName;
+    Rule.Scope1Expression := Scope1;
+    Rule.Scope2Expression := 'All';
+    // Via pad diameter (min = max = requested -> a fixed via size)
+    Rule.MinWidth := MMsToCoord(ViaDiaMils * 0.0254);
+    Rule.MaxWidth := MMsToCoord(ViaDiaMils * 0.0254);
+    // Via hole diameter
+    Rule.MinHoleWidth := MMsToCoord(HoleDiaMils * 0.0254);
+    Rule.MaxHoleWidth := MMsToCoord(HoleDiaMils * 0.0254);
+    Rule.DRCEnabled := True;
+    Board.AddPCBObject(Rule);
+    PCBServer.SendMessageToRobots(Rule.I_ObjectAddress, c_Broadcast, PCBM_BoardRegisteration, c_NoEventData);
+    PCBServer.PostProcess;
+
+    ResultProps := TStringList.Create;
+    try
+        AddJSONBoolean(ResultProps, 'success', True);
+        AddJSONProperty(ResultProps, 'rule_name', RuleName);
+        AddJSONProperty(ResultProps, 'rule_kind', 'RoutingVias');
+        AddJSONProperty(ResultProps, 'scope1', Scope1);
+        AddJSONNumber(ResultProps, 'via_diameter_mils', ViaDiaMils);
+        AddJSONNumber(ResultProps, 'hole_diameter_mils', HoleDiaMils);
+        OutputLines := TStringList.Create;
+        try
+            OutputLines.Text := BuildJSONObject(ResultProps);
+            Result := OutputLines.Text;
+        finally
+            OutputLines.Free;
+        end;
+    finally
+        ResultProps.Free;
+    end;
+end;
+
 // Function to get routed copper length per net (sum of tracks + arcs)
 function GetNetsWithLength(ROOT_DIR): String;
 var
