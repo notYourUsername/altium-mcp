@@ -21,6 +21,7 @@ import glob
 import re
 
 from bom import build_bom
+from activity import append_activity
 
 # Configure logging
 logging.basicConfig(
@@ -47,6 +48,8 @@ EXCHANGE_DIR = Path("C:/Users/Public/altium_mcp")
 EXCHANGE_DIR.mkdir(exist_ok=True)
 REQUEST_FILE = EXCHANGE_DIR / "request.json"
 RESPONSE_FILE = EXCHANGE_DIR / "response.json"
+# Human-readable audit trail of board/design-modifying tool calls.
+ACTIVITY_LOG = EXCHANGE_DIR / "mcp_activity.log"
 
 # Initialize FastMCP server
 mcp = FastMCP("AltiumMCP", description="Altium integration through the Model Context Protocol")
@@ -275,6 +278,7 @@ class AltiumBridge:
             try:
                 response = json.loads(response_text)
                 logger.info(f"Successfully parsed JSON response")
+                append_activity(ACTIVITY_LOG, command, params, response)
                 return response
             except json.JSONDecodeError as e:
                 logger.error(f"Error parsing JSON response: {e}")

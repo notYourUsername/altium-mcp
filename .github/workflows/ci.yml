@@ -21,4 +21,4 @@ jobs:
       - name: Install test deps
         run: python -m pip install --quiet pytest jsonschema
       - name: Run Tier A tests (schemas, fixtures, fab profiles)
-        run: python -m pytest server/tests/test_schemas.py server/tests/test_fab_profiles.py server/tests/test_bom.py -v
+        run: python -m pytest server/tests/test_schemas.py server/tests/test_fab_profiles.py server/tests/test_bom.py server/tests/test_activity.py -v
