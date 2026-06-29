@@ -453,6 +453,115 @@ begin
     end;
 end;
 
+// Function to create a Width Constraint design rule.
+// Params: rule_name, scope1 (default All), min_mils, max_mils, preferred_mils.
+// (Altium spells the property "PreferedWidth" with one 'r'.)
+function ExecuteCreateWidthRule(RequestData: TStringList): String;
+var
+    i, ValueStart : Integer;
+    RuleName, Scope1, ValStr : String;
+    MinMils, MaxMils, PrefMils : Double;
+    Board : IPCB_Board;
+    Rule  : IPCB_Rule;
+    LS    : IPCB_LayerStack_V7;
+    Lo    : IPCB_LayerObject;
+    ResultProps, OutputLines : TStringList;
+begin
+    RuleName := '';
+    Scope1 := 'All';
+    MinMils := 6;
+    MaxMils := 20;
+    PrefMils := 10;
+
+    for i := 0 to RequestData.Count - 1 do
+    begin
+        if (Pos('"rule_name"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            RuleName := TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1));
+        end
+        else if (Pos('"scope1"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            Scope1 := TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1));
+        end
+        else if (Pos('"min_mils"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            ValStr := StringReplace(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), ',', '', REPLACEALL);
+            MinMils := StrToFloatDef(ValStr, 6);
+        end
+        else if (Pos('"max_mils"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            ValStr := StringReplace(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), ',', '', REPLACEALL);
+            MaxMils := StrToFloatDef(ValStr, 20);
+        end
+        else if (Pos('"preferred_mils"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            ValStr := StringReplace(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), ',', '', REPLACEALL);
+            PrefMils := StrToFloatDef(ValStr, 10);
+        end;
+    end;
+
+    Board := PCBServer.GetCurrentPCBBoard;
+    if (Board = nil) then
+    begin
+        Result := '{"success": false, "error": "No PCB document is currently active"}';
+        Exit;
+    end;
+    if (RuleName = '') then
+    begin
+        Result := '{"success": false, "error": "No rule_name provided"}';
+        Exit;
+    end;
+
+    PCBServer.PreProcess;
+    Rule := PCBServer.PCBRuleFactory(eRule_MaxMinWidth);
+    Rule.Name := RuleName;
+    Rule.Scope1Expression := Scope1;
+    Rule.Scope2Expression := 'All';
+    // Width limits are per-layer indexed properties; set them on every copper layer.
+    LS := Board.LayerStack_V7;
+    if (LS <> nil) then
+    begin
+        Lo := LS.FirstLayer;
+        while (Lo <> nil) do
+        begin
+            Rule.MinWidth[Lo.LayerID]      := MMsToCoord(MinMils * 0.0254);
+            Rule.MaxWidth[Lo.LayerID]      := MMsToCoord(MaxMils * 0.0254);
+            Rule.FavoredWidth[Lo.LayerID] := MMsToCoord(PrefMils * 0.0254);
+            if (Lo = LS.LastLayer) then Break;
+            Lo := LS.NextLayer(Lo);
+        end;
+    end;
+    Rule.DRCEnabled := True;
+    Board.AddPCBObject(Rule);
+    PCBServer.SendMessageToRobots(Rule.I_ObjectAddress, c_Broadcast, PCBM_BoardRegisteration, c_NoEventData);
+    PCBServer.PostProcess;
+
+    ResultProps := TStringList.Create;
+    try
+        AddJSONBoolean(ResultProps, 'success', True);
+        AddJSONProperty(ResultProps, 'rule_name', RuleName);
+        AddJSONProperty(ResultProps, 'rule_kind', 'Width');
+        AddJSONProperty(ResultProps, 'scope1', Scope1);
+        AddJSONNumber(ResultProps, 'min_mils', MinMils);
+        AddJSONNumber(ResultProps, 'max_mils', MaxMils);
+        AddJSONNumber(ResultProps, 'preferred_mils', PrefMils);
+        OutputLines := TStringList.Create;
+        try
+            OutputLines.Text := BuildJSONObject(ResultProps);
+            Result := OutputLines.Text;
+        finally
+            OutputLines.Free;
+        end;
+    finally
+        ResultProps.Free;
+    end;
+end;
+
 // Function to get routed copper length per net (sum of tracks + arcs)
 function GetNetsWithLength(ROOT_DIR): String;
 var

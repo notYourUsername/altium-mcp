@@ -1498,6 +1498,38 @@ async def get_pcb_rules(ctx: Context) -> str:
     return json.dumps(rules_data, indent=2)
 
 @mcp.tool()
+async def create_width_rule(ctx: Context, rule_name: str, min_mils: float, max_mils: float,
+                            preferred_mils: float, scope1: str = "All") -> str:
+    """
+    Create a Width Constraint (routing width) design rule on the current Altium PCB.
+
+    Args:
+        rule_name: Name for the new rule.
+        min_mils: Minimum track width in mils.
+        max_mils: Maximum track width in mils.
+        preferred_mils: Preferred track width in mils.
+        scope1: Scope as an Altium query (default "All", e.g. "InNet('5V')").
+
+    Returns:
+        str: JSON object with the created rule's details (or an error).
+    """
+    logger.info(f"Creating width rule {rule_name}")
+
+    response = await altium_bridge.execute_command(
+        "create_width_rule",
+        {"rule_name": rule_name, "min_mils": min_mils, "max_mils": max_mils,
+         "preferred_mils": preferred_mils, "scope1": scope1},
+    )
+
+    if not response.get("success", False):
+        error_msg = response.get("error", "Unknown error")
+        logger.error(f"Error creating width rule: {error_msg}")
+        return json.dumps({"error": f"Failed to create width rule: {error_msg}"})
+
+    return json.dumps(response.get("result", {}), indent=2)
+
+
+@mcp.tool()
 async def update_clearance_rule(ctx: Context, rule_name: str, gap_mils: float) -> str:
     """
     Update the gap of an existing Clearance Constraint design rule, found by name.

@@ -746,6 +746,8 @@ begin
             Result := ExecuteCreateClearanceRule(RequestData);
         'update_clearance_rule':
             Result := ExecuteUpdateClearanceRule(RequestData);
+        'create_width_rule':
+            Result := ExecuteCreateWidthRule(RequestData);
         'run_drc':
             Result := RunDRC(ROOT_DIR);
         'get_drc_violations':
