@@ -1373,7 +1373,9 @@ async def get_routing_status(ctx: Context) -> str:
         all_names.add(n if isinstance(n, str) else n.get("net"))
     all_names.discard(None)
 
-    routed = len_resp.get("result", {}).get("nets", [])
+    routed_raw = len_resp.get("result", {}).get("nets", [])
+    # A net with 0 routed length has no real copper -> treat as unrouted, not routed.
+    routed = [r for r in routed_raw if float(r.get("length_mils", 0)) > 0]
     routed_names = set(r.get("net") for r in routed)
     unrouted = sorted(n for n in all_names if n not in routed_names)
     routed_sorted = sorted(routed, key=lambda r: float(r.get("length_mils", 0)), reverse=True)
@@ -1477,6 +1479,58 @@ async def stitch_vias(ctx: Context, x1: float, y1: float, x2: float, y2: float,
         placed.append({"x": round(vx, 2), "y": round(vy, 2), "ok": bool(r.get("success", False))})
     return json.dumps({"success": True, "net": net, "count": len(placed),
                        "pitch_mils": pitch_mils, "vias": placed}, indent=2)
+
+
+@mcp.tool()
+async def get_drc_summary(ctx: Context, fresh: bool = False) -> str:
+    """
+    Summarize DRC violations grouped by type, instead of a flat list - much easier to
+    triage than the raw run_drc output (which can be 100+ lines).
+
+    Args:
+        fresh: If True, re-run the DRC first (run_drc, which repours polygons as a
+               single undoable board change). If False (default), summarize the
+               violations from the last DRC run (read-only).
+
+    Returns:
+        str: JSON with total_violations and a by_type breakdown (type -> count,
+             most-common first) with a sample location and example descriptions.
+    """
+    cmd = "run_drc" if fresh else "get_drc_violations"
+    resp = await altium_bridge.execute_command(cmd, {})
+    if not resp.get("success", False):
+        return json.dumps({"success": False, "error": resp.get("error", f"{cmd} failed")})
+    result = resp.get("result", {})
+    violations = result.get("violations", []) if isinstance(result, dict) else []
+
+    groups = {}
+    for v in violations:
+        name = v.get("name", "")
+        # names look like "0041: Component / Rule" -> type is the text after ": "
+        vtype = name.split(":", 1)[1].strip() if ":" in name else (name.strip() or "Unknown")
+        g = groups.setdefault(vtype, {"count": 0, "descriptions": set(), "sample": None})
+        g["count"] += 1
+        d = (v.get("description") or "").strip()
+        if d:
+            g["descriptions"].add(d)
+        if g["sample"] is None:
+            g["sample"] = {"x_mils": v.get("x_mils"), "y_mils": v.get("y_mils")}
+
+    by_type = []
+    for vtype, g in sorted(groups.items(), key=lambda kv: kv[1]["count"], reverse=True):
+        by_type.append({
+            "type": vtype,
+            "count": g["count"],
+            "sample_location_mils": g["sample"],
+            "descriptions": sorted(g["descriptions"])[:5],
+        })
+
+    return json.dumps({
+        "success": True,
+        "source": "run_drc (fresh)" if fresh else "get_drc_violations (last run)",
+        "total_violations": len(violations),
+        "by_type": by_type,
+    }, indent=2)
 
 
 @mcp.tool()
