@@ -790,27 +790,18 @@ var
     nWidth, nClear, nVia : Integer;
     annularRule : IPCB_Rule;
     ResultProps, OutputLines : TStringList;
-
-    function GetNum(key: String; def: Double): Double;
-    var k: Integer; vs: String;
-    begin
-        Result := def;
-        for k := 0 to RequestData.Count - 1 do
-            if (Pos(key, RequestData[k]) > 0) then
-            begin
-                vs := StringReplace(TrimJSON(Copy(RequestData[k], Pos(':', RequestData[k]) + 1,
-                      Length(RequestData[k]))), ',', '', REPLACEALL);
-                Result := StrToFloatDef(vs, def);
-                Exit;
-            end;
-    end;
-
 begin
-    MinTrace := GetNum('"min_trace_mm"', 0);
-    MinSpace := GetNum('"min_space_mm"', 0);
-    ViaHole  := GetNum('"via_hole_mm"', 0);
-    ViaPad   := GetNum('"via_pad_mm"', 0);
-    Annular  := GetNum('"annular_mm"', 0);
+    MinTrace := 0; MinSpace := 0; ViaHole := 0; ViaPad := 0; Annular := 0;
+    for i := 0 to RequestData.Count - 1 do
+    begin
+        ValueStart := Pos(':', RequestData[i]) + 1;
+        ValStr := StringReplace(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), ',', '', REPLACEALL);
+        if (Pos('"min_trace_mm"', RequestData[i]) > 0) then MinTrace := StrToFloatDef(ValStr, 0)
+        else if (Pos('"min_space_mm"', RequestData[i]) > 0) then MinSpace := StrToFloatDef(ValStr, 0)
+        else if (Pos('"via_hole_mm"', RequestData[i]) > 0) then ViaHole := StrToFloatDef(ValStr, 0)
+        else if (Pos('"via_pad_mm"', RequestData[i]) > 0) then ViaPad := StrToFloatDef(ValStr, 0)
+        else if (Pos('"annular_mm"', RequestData[i]) > 0) then Annular := StrToFloatDef(ValStr, 0);
+    end;
 
     Board := PCBServer.GetCurrentPCBBoard;
     if (Board = nil) then
@@ -901,6 +892,13 @@ begin
     end;
 end;
 
+// Helper: keep the smallest positive coordinate seen (-1 = unset). Top-level so it is
+// not a nested routine (DelphiScript nested routines cannot access enclosing scope).
+procedure TakeMin(var m: Integer; v: Integer);
+begin
+    if (v > 0) and ((m < 0) or (v < m)) then m := v;
+end;
+
 // Read-only: measure the board for DFM. Returns smallest observed geometry + current
 // rule floors (all in mm). Python (fab.py) compares these against the fab profile.
 function ExecuteFabMeasure(RequestData: TStringList): String;
@@ -919,12 +917,6 @@ var
     rW, rClr, rViaHole, rViaPad, rH2H : Integer;
     nTrack, nVia, nPad : Integer;
     ResultProps, OutputLines : TStringList;
-
-    procedure TakeMin(var m: Integer; v: Integer);
-    begin
-        if (v > 0) and ((m < 0) or (v < m)) then m := v;
-    end;
-
 begin
     Board := PCBServer.GetCurrentPCBBoard;
     if (Board = nil) then
