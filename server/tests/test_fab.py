@@ -75,3 +75,24 @@ def test_eps_does_not_false_flag_exact_minimum():
 def test_missing_measurements_skipped():
     res = evaluate_dfm(_prof(), {"min_track_width_mm": 0.20})
     assert res["total_checks"] == 1
+
+
+def test_hole_to_hole_and_copper_to_edge_clean_pass():
+    # PCBWay: min_hole_to_hole_mm=0.5, copper_to_edge_mm=0.2. Both comfortably above.
+    meas = {"min_hole_to_hole_mm": 0.80, "min_copper_to_edge_mm": 0.50}
+    res = evaluate_dfm(_prof(), meas)
+    assert res["passed"] is True
+    assert res["violation_count"] == 0
+    checks = {f["check"] for f in res["findings"]}
+    assert "Hole-to-hole spacing" in checks
+    assert "Copper-to-edge clearance" in checks
+
+
+def test_hole_to_hole_and_copper_to_edge_violation():
+    # Below PCBWay's 0.5mm hole-to-hole and 0.2mm copper-to-edge minimums.
+    meas = {"min_hole_to_hole_mm": 0.25, "min_copper_to_edge_mm": 0.10}
+    res = evaluate_dfm(_prof(), meas)
+    assert res["passed"] is False
+    viol = {f["check"] for f in res["findings"] if f["status"] == "VIOLATION"}
+    assert "Hole-to-hole spacing" in viol
+    assert "Copper-to-edge clearance" in viol

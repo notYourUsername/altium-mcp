@@ -59,6 +59,8 @@ GEOMETRY_CHECKS = [
     ("min_annular_ring_mm", "min_via_annular_mm", "Via annular ring"),
     ("min_via_drill_mm", "min_pad_hole_mm", "Pad hole"),
     ("min_annular_ring_mm", "min_pad_annular_mm", "Pad annular ring"),
+    ("min_hole_to_hole_mm", "min_hole_to_hole_mm", "Hole-to-hole spacing"),
+    ("copper_to_edge_mm", "min_copper_to_edge_mm", "Copper-to-edge clearance"),
 ]
 
 # Rule-floor checks: the board's design-rule minimum should not allow tighter than the fab.
