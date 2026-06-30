@@ -27,7 +27,7 @@ from impedance import solve_width_for_impedance, microstrip_z0, stripline_z0
 from decoupling import audit_decoupling
 from signalrules import (load_profile as load_signal_profile,
                          find_profile as find_signal_profile,
-                         list_profiles as list_signal_profiles,
+                         list_profiles as sig_list_profiles,
                          build_rule_commands as build_signal_rule_commands)
 
 # Configure logging
@@ -1779,7 +1779,7 @@ async def list_signal_profiles(ctx: Context) -> str:
     Returns:
         str: JSON array of {profile, file} for each profile.
     """
-    return json.dumps(list_signal_profiles(SIGNAL_PROFILES_DIR), indent=2)
+    return json.dumps(sig_list_profiles(SIGNAL_PROFILES_DIR), indent=2)
 
 
 @mcp.tool()
