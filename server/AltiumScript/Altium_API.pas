@@ -834,7 +834,9 @@ begin
         'create_pcb_footprint':
             Result := ExecuteCreatePCBFootprint(RequestData);
     else
-        ShowMessage('Error: Unknown command: ' + CommandName);
+        // Return a clean JSON error instead of a modal ShowMessage - a modal here
+        // freezes the bridge until a human clicks OK, hanging the MCP call.
+        Result := '{"success": false, "error": "Unknown command: ' + CommandName + '"}';
     end;
 end;
 

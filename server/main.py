@@ -1492,7 +1492,7 @@ async def stitch_vias(ctx: Context, x1: float, y1: float, x2: float, y2: float,
                        "pitch_mils": pitch_mils, "vias": placed}, indent=2)
 
 
-SERVER_VERSION = "2026-06-30-b6"
+SERVER_VERSION = "2026-06-30-b7"
 
 
 @mcp.tool()
@@ -1564,11 +1564,12 @@ async def run_self_test(ctx: Context) -> str:
     pass/fail for each. Read-only - does not modify the board (no DRC repour). Run it
     after a restart/update to confirm the server is healthy and a PCB is active.
     """
+    # Lean set of fast, confirmed-valid bridge commands. Kept short so the whole
+    # sequence fits inside the MCP call timeout (each command is a bridge round-trip).
     commands = [
-        "get_board_info", "get_all_nets", "get_all_designators", "get_nets_with_length",
-        "get_unrouted_nets", "get_net_continuity", "get_pcb_rules", "get_pcb_layers",
-        "get_pcb_layer_stackup", "get_net_classes", "get_drc_violations",
-        "get_output_job_containers", "get_all_component_data",
+        "get_board_info", "get_all_nets", "get_pcb_rules", "get_nets_with_length",
+        "get_unrouted_nets", "get_net_classes", "get_drc_violations",
+        "get_pcb_layer_stackup",
     ]
     results = []
     passed = 0
