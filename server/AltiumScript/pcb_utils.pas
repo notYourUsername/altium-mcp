@@ -923,9 +923,11 @@ function CoordDist(x1: Integer; y1: Integer; x2: Integer; y2: Integer): Double;
 var
     dx, dy : Double;
 begin
-    dx := x2 - x1;
-    dy := y2 - y1;
-    Result := Sqrt(dx * dx + dy * dy);
+    // Work in mm: internal coords are ~10^7, and squaring them overflows 32-bit
+    // integer math in DelphiScript even when the vars are Double. mm values are small.
+    dx := CoordToMMs(x2) - CoordToMMs(x1);
+    dy := CoordToMMs(y2) - CoordToMMs(y1);
+    Result := MMsToCoord(Sqrt(dx * dx + dy * dy));
 end;
 
 // Helper: shortest distance (internal coords) from point (px,py) to the axis-aligned
@@ -1125,8 +1127,9 @@ begin
         begin
             gap := CoordDist(cx, cy, StrToInt(HoleX[j]), StrToInt(HoleY[j]))
                    - rad - StrToInt(HoleR[j]);
-            if (gap < 0) then gap := 0;
-            TakeMinD(mH2H, gap);
+            // Skip coincident/overlapping holes (e.g. via-in-pad, stacked vias) which
+            // would read <= 0 and swamp the minimum; only count real positive spacings.
+            if (gap > 0) then TakeMinD(mH2H, gap);
         end;
     end;
     HoleX.Free;
