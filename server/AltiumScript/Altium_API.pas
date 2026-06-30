@@ -752,6 +752,10 @@ begin
             Result := ExecuteCreateViaRule(RequestData);
         'delete_design_rule':
             Result := ExecuteDeleteDesignRule(RequestData);
+        'apply_fab_profile':
+            Result := ExecuteApplyFabProfile(RequestData);
+        'fab_measure':
+            Result := ExecuteFabMeasure(RequestData);
         'run_drc':
             Result := RunDRC(ROOT_DIR);
         'get_drc_violations':

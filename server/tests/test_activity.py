@@ -19,7 +19,7 @@ OK = {"success": True}
 READS = [
     "get_bom", "get_pcb_rules", "get_board_info", "get_all_component_data",
     "get_drc_violations", "get_schematic_nets", "search_library_symbol",
-    "take_view_screenshot", "get_server_status",
+    "take_view_screenshot", "get_server_status", "fab_measure",
 ]
 
 WRITES = [
@@ -27,6 +27,7 @@ WRITES = [
     "create_via_rule", "run_drc", "create_net_class", "create_pcb_footprint",
     "create_schematic_symbol", "move_components", "set_component_position",
     "set_pcb_layer_visibility", "layout_duplicator_apply", "run_output_jobs",
+    "apply_fab_profile", "delete_design_rule",
 ]
 
 

@@ -27,6 +27,7 @@ _LOCK = threading.Lock()
 # mis-classified as writes). Keep this list small and explicit.
 READ_ONLY_COMMANDS = {
     "take_view_screenshot",
+    "fab_measure",  # DFM measurement for check_against_fab; reads only
 }
 
 

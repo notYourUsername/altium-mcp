@@ -772,6 +772,279 @@ begin
     end;
 end;
 
+// Function to apply a fab profile: raise the global rule FLOORS to the fab's minimums.
+// Params (mm): min_trace_mm, min_space_mm, via_hole_mm, via_pad_mm, annular_mm.
+// Touches only All-scoped Width/Clearance/RoutingVias rules (the global defaults) and
+// ensures a Minimum Annular Ring rule exists. One undoable step.
+function ExecuteApplyFabProfile(RequestData: TStringList): String;
+var
+    i, ValueStart : Integer;
+    ValStr        : String;
+    MinTrace, MinSpace, ViaHole, ViaPad, Annular : Double;
+    Board   : IPCB_Board;
+    Iter    : IPCB_BoardIterator;
+    Rule    : IPCB_Rule;
+    LS      : IPCB_LayerStack_V7;
+    Lo      : IPCB_LayerObject;
+    Kind    : String;
+    nWidth, nClear, nVia : Integer;
+    annularRule : IPCB_Rule;
+    ResultProps, OutputLines : TStringList;
+
+    function GetNum(key: String; def: Double): Double;
+    var k: Integer; vs: String;
+    begin
+        Result := def;
+        for k := 0 to RequestData.Count - 1 do
+            if (Pos(key, RequestData[k]) > 0) then
+            begin
+                vs := StringReplace(TrimJSON(Copy(RequestData[k], Pos(':', RequestData[k]) + 1,
+                      Length(RequestData[k]))), ',', '', REPLACEALL);
+                Result := StrToFloatDef(vs, def);
+                Exit;
+            end;
+    end;
+
+begin
+    MinTrace := GetNum('"min_trace_mm"', 0);
+    MinSpace := GetNum('"min_space_mm"', 0);
+    ViaHole  := GetNum('"via_hole_mm"', 0);
+    ViaPad   := GetNum('"via_pad_mm"', 0);
+    Annular  := GetNum('"annular_mm"', 0);
+
+    Board := PCBServer.GetCurrentPCBBoard;
+    if (Board = nil) then
+    begin
+        Result := '{"success": false, "error": "No PCB document is currently active"}';
+        Exit;
+    end;
+
+    nWidth := 0; nClear := 0; nVia := 0;
+    annularRule := nil;
+    LS := Board.LayerStack_V7;
+
+    PCBServer.PreProcess;
+
+    Iter := Board.BoardIterator_Create;
+    Iter.AddFilter_ObjectSet(MkSet(eRuleObject));
+    Iter.AddFilter_LayerSet(AllLayers);
+    Iter.AddFilter_Method(eProcessAll);
+    Rule := Iter.FirstPCBObject;
+    while (Rule <> nil) do
+    begin
+        Kind := Rule.GetState_ShortDescriptorString;
+        if (Kind = 'Width Constraint') and (Rule.Scope1Expression = 'All') and (MinTrace > 0) and (LS <> nil) then
+        begin
+            Lo := LS.FirstLayer;
+            while (Lo <> nil) do
+            begin
+                Rule.MinWidth[Lo.LayerID] := MMsToCoord(MinTrace);
+                if (Lo = LS.LastLayer) then Break;
+                Lo := LS.NextLayer(Lo);
+            end;
+            nWidth := nWidth + 1;
+        end
+        else if (Kind = 'Clearance Constraint') and (Rule.Scope1Expression = 'All') and (Rule.Scope2Expression = 'All') and (MinSpace > 0) then
+        begin
+            Rule.Gap := MMsToCoord(MinSpace);
+            nClear := nClear + 1;
+        end
+        else if (Kind = 'Routing Via Style') and (Rule.Scope1Expression = 'All') then
+        begin
+            if (ViaHole > 0) then Rule.MinHoleWidth := MMsToCoord(ViaHole);
+            if (ViaPad > 0) then Rule.MinWidth := MMsToCoord(ViaPad);
+            nVia := nVia + 1;
+        end
+        else if (Kind = 'Minimum Annular Ring') then
+            annularRule := Rule;
+        Rule := Iter.NextPCBObject;
+    end;
+    Board.BoardIterator_Destroy(Iter);
+
+    if (Annular > 0) then
+    begin
+        if (annularRule = nil) then
+        begin
+            annularRule := PCBServer.PCBRuleFactory(eRule_MinimumAnnularRing);
+            annularRule.Name := 'FabMinAnnularRing';
+            annularRule.Scope1Expression := 'All';
+            annularRule.DRCEnabled := True;
+            Board.AddPCBObject(annularRule);
+            PCBServer.SendMessageToRobots(annularRule.I_ObjectAddress, c_Broadcast, PCBM_BoardRegisteration, c_NoEventData);
+        end;
+        annularRule.Minimum := MMsToCoord(Annular);
+    end;
+
+    PCBServer.PostProcess;
+    Board.ViewManager_FullUpdate;
+
+    ResultProps := TStringList.Create;
+    try
+        AddJSONBoolean(ResultProps, 'success', True);
+        AddJSONInteger(ResultProps, 'width_rules_updated', nWidth);
+        AddJSONInteger(ResultProps, 'clearance_rules_updated', nClear);
+        AddJSONInteger(ResultProps, 'via_rules_updated', nVia);
+        AddJSONNumber(ResultProps, 'min_trace_mm', MinTrace);
+        AddJSONNumber(ResultProps, 'min_space_mm', MinSpace);
+        AddJSONNumber(ResultProps, 'via_hole_mm', ViaHole);
+        AddJSONNumber(ResultProps, 'via_pad_mm', ViaPad);
+        AddJSONNumber(ResultProps, 'annular_mm', Annular);
+        OutputLines := TStringList.Create;
+        try
+            OutputLines.Text := BuildJSONObject(ResultProps);
+            Result := OutputLines.Text;
+        finally
+            OutputLines.Free;
+        end;
+    finally
+        ResultProps.Free;
+    end;
+end;
+
+// Read-only: measure the board for DFM. Returns smallest observed geometry + current
+// rule floors (all in mm). Python (fab.py) compares these against the fab profile.
+function ExecuteFabMeasure(RequestData: TStringList): String;
+var
+    Board : IPCB_Board;
+    Iter  : IPCB_BoardIterator;
+    Track : IPCB_Track;
+    Via   : IPCB_Via;
+    Pad   : IPCB_Pad;
+    Rule  : IPCB_Rule;
+    LS    : IPCB_LayerStack_V7;
+    Lo    : IPCB_LayerObject;
+    Kind  : String;
+    padDim, ann : Integer;
+    mTrack, mViaHole, mViaPad, mViaAnn, mPadHole, mPadAnn : Integer;
+    rW, rClr, rViaHole, rViaPad, rH2H : Integer;
+    nTrack, nVia, nPad : Integer;
+    ResultProps, OutputLines : TStringList;
+
+    procedure TakeMin(var m: Integer; v: Integer);
+    begin
+        if (v > 0) and ((m < 0) or (v < m)) then m := v;
+    end;
+
+begin
+    Board := PCBServer.GetCurrentPCBBoard;
+    if (Board = nil) then
+    begin
+        Result := '{"success": false, "error": "No PCB document is currently active"}';
+        Exit;
+    end;
+
+    mTrack := -1; mViaHole := -1; mViaPad := -1; mViaAnn := -1; mPadHole := -1; mPadAnn := -1;
+    rW := -1; rClr := -1; rViaHole := -1; rViaPad := -1; rH2H := -1;
+    nTrack := 0; nVia := 0; nPad := 0;
+    LS := Board.LayerStack_V7;
+
+    // Tracks (routed copper only -> have a net)
+    Iter := Board.BoardIterator_Create;
+    Iter.AddFilter_ObjectSet(MkSet(eTrackObject));
+    Iter.AddFilter_LayerSet(AllLayers);
+    Iter.AddFilter_Method(eProcessAll);
+    Track := Iter.FirstPCBObject;
+    while (Track <> nil) do
+    begin
+        if (Track.Net <> nil) then
+        begin
+            TakeMin(mTrack, Track.Width);
+            nTrack := nTrack + 1;
+        end;
+        Track := Iter.NextPCBObject;
+    end;
+    Board.BoardIterator_Destroy(Iter);
+
+    // Vias
+    Iter := Board.BoardIterator_Create;
+    Iter.AddFilter_ObjectSet(MkSet(eViaObject));
+    Iter.AddFilter_LayerSet(AllLayers);
+    Iter.AddFilter_Method(eProcessAll);
+    Via := Iter.FirstPCBObject;
+    while (Via <> nil) do
+    begin
+        TakeMin(mViaHole, Via.HoleSize);
+        TakeMin(mViaPad, Via.Size);
+        ann := (Via.Size - Via.HoleSize) div 2;
+        TakeMin(mViaAnn, ann);
+        nVia := nVia + 1;
+        Via := Iter.NextPCBObject;
+    end;
+    Board.BoardIterator_Destroy(Iter);
+
+    // Pads with holes
+    Iter := Board.BoardIterator_Create;
+    Iter.AddFilter_ObjectSet(MkSet(ePadObject));
+    Iter.AddFilter_LayerSet(AllLayers);
+    Iter.AddFilter_Method(eProcessAll);
+    Pad := Iter.FirstPCBObject;
+    while (Pad <> nil) do
+    begin
+        if (Pad.HoleSize > 0) then
+        begin
+            TakeMin(mPadHole, Pad.HoleSize);
+            if (Pad.TopXSize < Pad.TopYSize) then padDim := Pad.TopXSize else padDim := Pad.TopYSize;
+            ann := (padDim - Pad.HoleSize) div 2;
+            TakeMin(mPadAnn, ann);
+            nPad := nPad + 1;
+        end;
+        Pad := Iter.NextPCBObject;
+    end;
+    Board.BoardIterator_Destroy(Iter);
+
+    // Current rule floors
+    Iter := Board.BoardIterator_Create;
+    Iter.AddFilter_ObjectSet(MkSet(eRuleObject));
+    Iter.AddFilter_LayerSet(AllLayers);
+    Iter.AddFilter_Method(eProcessAll);
+    Rule := Iter.FirstPCBObject;
+    while (Rule <> nil) do
+    begin
+        Kind := Rule.GetState_ShortDescriptorString;
+        if (Kind = 'Width Constraint') and (Rule.Scope1Expression = 'All') and (LS <> nil) then
+            TakeMin(rW, Rule.MinWidth[LS.FirstLayer.LayerID])
+        else if (Kind = 'Clearance Constraint') and (Rule.Scope1Expression = 'All') and (Rule.Scope2Expression = 'All') then
+            TakeMin(rClr, Rule.Gap)
+        else if (Kind = 'Routing Via Style') and (Rule.Scope1Expression = 'All') then
+        begin
+            TakeMin(rViaHole, Rule.MinHoleWidth);
+            TakeMin(rViaPad, Rule.MinWidth);
+        end
+        else if (Kind = 'Hole To Hole Clearance') and (Rule.Scope1Expression = 'All') then
+            TakeMin(rH2H, Rule.Gap);
+        Rule := Iter.NextPCBObject;
+    end;
+    Board.BoardIterator_Destroy(Iter);
+
+    ResultProps := TStringList.Create;
+    try
+        AddJSONBoolean(ResultProps, 'success', True);
+        AddJSONInteger(ResultProps, 'track_count', nTrack);
+        AddJSONInteger(ResultProps, 'via_count', nVia);
+        AddJSONInteger(ResultProps, 'holed_pad_count', nPad);
+        if (mTrack >= 0) then AddJSONNumber(ResultProps, 'min_track_width_mm', CoordToMMs(mTrack));
+        if (mViaHole >= 0) then AddJSONNumber(ResultProps, 'min_via_hole_mm', CoordToMMs(mViaHole));
+        if (mViaPad >= 0) then AddJSONNumber(ResultProps, 'min_via_pad_mm', CoordToMMs(mViaPad));
+        if (mViaAnn >= 0) then AddJSONNumber(ResultProps, 'min_via_annular_mm', CoordToMMs(mViaAnn));
+        if (mPadHole >= 0) then AddJSONNumber(ResultProps, 'min_pad_hole_mm', CoordToMMs(mPadHole));
+        if (mPadAnn >= 0) then AddJSONNumber(ResultProps, 'min_pad_annular_mm', CoordToMMs(mPadAnn));
+        if (rW >= 0) then AddJSONNumber(ResultProps, 'rule_min_width_mm', CoordToMMs(rW));
+        if (rClr >= 0) then AddJSONNumber(ResultProps, 'rule_min_clearance_mm', CoordToMMs(rClr));
+        if (rViaHole >= 0) then AddJSONNumber(ResultProps, 'rule_via_hole_mm', CoordToMMs(rViaHole));
+        if (rViaPad >= 0) then AddJSONNumber(ResultProps, 'rule_via_pad_mm', CoordToMMs(rViaPad));
+        if (rH2H >= 0) then AddJSONNumber(ResultProps, 'rule_hole_to_hole_mm', CoordToMMs(rH2H));
+        OutputLines := TStringList.Create;
+        try
+            OutputLines.Text := BuildJSONObject(ResultProps);
+            Result := OutputLines.Text;
+        finally
+            OutputLines.Free;
+        end;
+    finally
+        ResultProps.Free;
+    end;
+end;
+
 // Function to get routed copper length per net (sum of tracks + arcs)
 function GetNetsWithLength(ROOT_DIR): String;
 var

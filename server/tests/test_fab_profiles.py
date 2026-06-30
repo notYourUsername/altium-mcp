@@ -12,7 +12,7 @@ from pathlib import Path
 import jsonschema
 
 REPO = Path(__file__).resolve().parents[2]
-FP_DIR = REPO / "fab_profiles"
+FP_DIR = REPO / "server" / "fab_profiles"
 SCHEMA_PATH = FP_DIR / "fab_profile.schema.json"
 
 

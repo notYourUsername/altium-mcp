@@ -22,6 +22,7 @@ import re
 
 from bom import build_bom
 from activity import append_activity
+from fab import load_profile, find_profile, evaluate_dfm
 
 # Configure logging
 logging.basicConfig(
@@ -50,6 +51,8 @@ REQUEST_FILE = EXCHANGE_DIR / "request.json"
 RESPONSE_FILE = EXCHANGE_DIR / "response.json"
 # Human-readable audit trail of board/design-modifying tool calls.
 ACTIVITY_LOG = EXCHANGE_DIR / "mcp_activity.log"
+# Fab-house capability profiles ship alongside the server.
+FAB_PROFILES_DIR = Path(__file__).resolve().parent / "fab_profiles"
 
 # Initialize FastMCP server
 mcp = FastMCP("AltiumMCP", description="Altium integration through the Model Context Protocol")
@@ -1570,6 +1573,99 @@ async def delete_design_rule(ctx: Context, rule_name: str) -> str:
         return json.dumps({"error": f"Failed to delete design rule: {error_msg}"})
 
     return json.dumps(response.get("result", {}), indent=2)
+
+
+@mcp.tool()
+async def list_fab_profiles(ctx: Context) -> str:
+    """
+    List the available fab-house capability profiles that ship with the server.
+
+    Returns:
+        str: JSON array of {fab, file, verified} for each profile.
+    """
+    out = []
+    for p in sorted(FAB_PROFILES_DIR.glob("*.json")):
+        if p.name == "fab_profile.schema.json":
+            continue
+        try:
+            data = load_profile(p)
+            out.append({"fab": data.get("fab"), "file": p.name,
+                        "verified": data.get("verified", False)})
+        except Exception:
+            out.append({"fab": None, "file": p.name, "verified": False})
+    return json.dumps(out, indent=2)
+
+
+@mcp.tool()
+async def apply_fab_profile(ctx: Context, fab: str) -> str:
+    """
+    Apply a fab house's minimum capabilities to the current PCB's design rules: raises
+    the global min-width, min-clearance and routing-via floors to the fab's limits and
+    ensures a Minimum Annular Ring rule exists. Use list_fab_profiles to see options.
+
+    This modifies the board (one undoable step). It only tightens the All-scoped global
+    rules; net-specific rules are left untouched.
+
+    Args:
+        fab: Fab name or profile file stem (e.g. "PCBWay").
+
+    Returns:
+        str: JSON with what was applied, or an error.
+    """
+    logger.info(f"Applying fab profile {fab}")
+    path = find_profile(FAB_PROFILES_DIR, fab)
+    if path is None:
+        return json.dumps({"error": f"No fab profile found for '{fab}'. Try list_fab_profiles."})
+    profile = load_profile(path)
+    r = profile["rules"]
+    response = await altium_bridge.execute_command("apply_fab_profile", {
+        "min_trace_mm": r["min_trace_mm"],
+        "min_space_mm": r["min_space_mm"],
+        "via_hole_mm": r["min_via_drill_mm"],
+        "via_pad_mm": r["min_via_diameter_mm"],
+        "annular_mm": r["min_annular_ring_mm"],
+    })
+    if not response.get("success", False):
+        error_msg = response.get("error", "Unknown error")
+        return json.dumps({"error": f"Failed to apply fab profile: {error_msg}"})
+    result = response.get("result", {})
+    result["fab"] = profile.get("fab")
+    if not profile.get("verified", False):
+        result["warning"] = ("Profile is UNVERIFIED - confirm these limits against the fab's "
+                             "current published capabilities before relying on them.")
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+async def check_against_fab(ctx: Context, fab: str) -> str:
+    """
+    DFM check: measure the current PCB and compare it against a fab house's minimum
+    capabilities. Reports both rule-floor mismatches and actual geometry violations
+    (smallest track, via hole/pad, annular ring, pad hole). Read-only.
+
+    Args:
+        fab: Fab name or profile file stem (e.g. "PCBWay").
+
+    Returns:
+        str: JSON with findings (each OK/VIOLATION, limit vs actual in mm + mil), a
+             summary count, and the raw measurement.
+    """
+    logger.info(f"Checking board against fab {fab}")
+    path = find_profile(FAB_PROFILES_DIR, fab)
+    if path is None:
+        return json.dumps({"error": f"No fab profile found for '{fab}'. Try list_fab_profiles."})
+    profile = load_profile(path)
+    response = await altium_bridge.execute_command("fab_measure", {})
+    if not response.get("success", False):
+        error_msg = response.get("error", "Unknown error")
+        return json.dumps({"error": f"Failed to measure board: {error_msg}"})
+    measurement = response.get("result", {})
+    report = evaluate_dfm(profile, measurement)
+    report["measurement"] = measurement
+    if not profile.get("verified", False):
+        report["warning"] = ("Profile is UNVERIFIED - confirm these limits against the fab's "
+                             "current published capabilities before relying on the result.")
+    return json.dumps(report, indent=2)
 
 
 @mcp.tool()
