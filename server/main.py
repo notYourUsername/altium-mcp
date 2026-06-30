@@ -1389,6 +1389,97 @@ async def get_routing_status(ctx: Context) -> str:
 
 
 @mcp.tool()
+async def add_via(ctx: Context, x: float, y: float, net: str = "",
+                  pad_mils: float = 24, hole_mils: float = 12) -> str:
+    """
+    Add a through via at (x, y) in mils (relative to the board origin - the same
+    frame as component positions). Optionally assign it to a net (e.g. "GND") so it
+    stitches into that plane/net. Use for ground stitching, thermal vias, or fanout.
+
+    Args:
+        x, y: Via center in mils (board-origin relative).
+        net: Net name to connect the via to (e.g. "GND"). Empty = free via.
+        pad_mils: Via pad (outer) diameter in mils (default 24).
+        hole_mils: Via drill diameter in mils (default 12).
+    """
+    resp = await altium_bridge.execute_command("add_via", {
+        "x": x, "y": y, "net": net, "pad_mils": pad_mils, "hole_mils": hole_mils})
+    if not resp.get("success", False):
+        return json.dumps({"success": False, "error": resp.get("error", "add_via failed")})
+    return json.dumps({"success": True, "result": resp.get("result", {})}, indent=2)
+
+
+@mcp.tool()
+async def add_track(ctx: Context, x1: float, y1: float, x2: float, y2: float,
+                    layer: str = "top", width_mils: float = 8, net: str = "") -> str:
+    """
+    Add a straight copper track between (x1,y1) and (x2,y2) in mils (board-origin
+    relative). A simple point-to-point assist - not a topology-aware autoroute.
+
+    Args:
+        x1, y1, x2, y2: Endpoints in mils.
+        layer: "top", "bottom", "mid1", or "mid2".
+        width_mils: Track width in mils.
+        net: Optional net name to assign (e.g. "GND").
+    """
+    resp = await altium_bridge.execute_command("add_track", {
+        "x1": x1, "y1": y1, "x2": x2, "y2": y2,
+        "layer": layer, "width_mils": width_mils, "net": net})
+    if not resp.get("success", False):
+        return json.dumps({"success": False, "error": resp.get("error", "add_track failed")})
+    return json.dumps({"success": True, "result": resp.get("result", {})}, indent=2)
+
+
+@mcp.tool()
+async def delete_via_near(ctx: Context, x: float, y: float, tol_mils: float = 20) -> str:
+    """
+    Delete the nearest free (non-component) via within tol_mils of (x, y) mils.
+    Use to rip up a stray via or undo a stitching via.
+
+    Args:
+        x, y: Search point in mils (board-origin relative).
+        tol_mils: Search radius in mils.
+    """
+    resp = await altium_bridge.execute_command("delete_via_near", {
+        "x": x, "y": y, "tol_mils": tol_mils})
+    if not resp.get("success", False):
+        return json.dumps({"success": False, "error": resp.get("error", "no via deleted")})
+    return json.dumps({"success": True, "result": resp.get("result", {})}, indent=2)
+
+
+@mcp.tool()
+async def stitch_vias(ctx: Context, x1: float, y1: float, x2: float, y2: float,
+                      pitch_mils: float, net: str = "GND",
+                      pad_mils: float = 24, hole_mils: float = 12) -> str:
+    """
+    Place a row of stitching vias evenly along the line from (x1,y1) to (x2,y2),
+    spaced pitch_mils apart, all on the given net (default GND). Good for stitching
+    a ground pour or guarding an RF trace. Orchestrates add_via in Python.
+
+    Args:
+        x1, y1, x2, y2: Line endpoints in mils (board-origin relative).
+        pitch_mils: Center-to-center via spacing in mils.
+        net: Net to connect the vias to (default "GND").
+        pad_mils, hole_mils: Via pad and drill diameters in mils.
+    """
+    import math
+    if pitch_mils <= 0:
+        return json.dumps({"success": False, "error": "pitch_mils must be > 0"})
+    length = math.hypot(x2 - x1, y2 - y1)
+    n = int(length // pitch_mils) if length > 0 else 0
+    placed = []
+    for k in range(n + 1):
+        t = 0 if length == 0 else (k * pitch_mils) / length
+        vx = x1 + (x2 - x1) * t
+        vy = y1 + (y2 - y1) * t
+        r = await altium_bridge.execute_command("add_via", {
+            "x": vx, "y": vy, "net": net, "pad_mils": pad_mils, "hole_mils": hole_mils})
+        placed.append({"x": round(vx, 2), "y": round(vy, 2), "ok": bool(r.get("success", False))})
+    return json.dumps({"success": True, "net": net, "count": len(placed),
+                       "pitch_mils": pitch_mils, "vias": placed}, indent=2)
+
+
+@mcp.tool()
 async def get_schematic_nets(ctx: Context) -> str:
     """
     Return every unique net name from all schematic documents in the active project.

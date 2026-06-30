@@ -899,6 +899,234 @@ begin
     end;
 end;
 
+// Helper: find a board net by exact name via iteration (no reliance on
+// GetPcbNetByRefName, which is not confirmed on this install). Returns nil if absent.
+function FindPcbNet(Board: IPCB_Board; NetName: String): IPCB_Net;
+var
+    Iter : IPCB_BoardIterator;
+    Net  : IPCB_Net;
+begin
+    Result := nil;
+    Iter := Board.BoardIterator_Create;
+    Iter.AddFilter_ObjectSet(MkSet(eNetObject));
+    Iter.AddFilter_LayerSet(AllLayers);
+    Iter.AddFilter_Method(eProcessAll);
+    Net := Iter.FirstPCBObject;
+    while (Net <> nil) do
+    begin
+        if (Net.Name = NetName) then
+        begin
+            Result := Net;
+            Break;
+        end;
+        Net := Iter.NextPCBObject;
+    end;
+    Board.BoardIterator_Destroy(Iter);
+end;
+
+// Add a through via at (x,y) mils (relative to board origin). Optional net, pad and
+// hole diameters in mils. Used for ground stitching, thermal vias, fanout.
+function ExecuteAddVia(RequestData: TStringList): String;
+var
+    i, ValueStart : Integer;
+    NetName : String;
+    Xm, Ym, PadM, HoleM : Double;
+    HasNet : Boolean;
+    Board : IPCB_Board;
+    Via   : IPCB_Via;
+    Net   : IPCB_Net;
+    xo, yo : Integer;
+    ResultProps, OutputLines : TStringList;
+begin
+    Xm := 0; Ym := 0; PadM := 24; HoleM := 12; NetName := ''; HasNet := False;
+    for i := 0 to RequestData.Count - 1 do
+    begin
+        if (Pos('"x"', RequestData[i]) > 0) then
+        begin ValueStart := Pos(':', RequestData[i]) + 1; Xm := StrToFloatDef(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), 0); end
+        else if (Pos('"y"', RequestData[i]) > 0) then
+        begin ValueStart := Pos(':', RequestData[i]) + 1; Ym := StrToFloatDef(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), 0); end
+        else if (Pos('"pad_mils"', RequestData[i]) > 0) then
+        begin ValueStart := Pos(':', RequestData[i]) + 1; PadM := StrToFloatDef(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), 24); end
+        else if (Pos('"hole_mils"', RequestData[i]) > 0) then
+        begin ValueStart := Pos(':', RequestData[i]) + 1; HoleM := StrToFloatDef(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), 12); end
+        else if (Pos('"net"', RequestData[i]) > 0) then
+        begin ValueStart := Pos(':', RequestData[i]) + 1; NetName := TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)); if (NetName <> '') then HasNet := True; end;
+    end;
+
+    Board := PCBServer.GetCurrentPCBBoard;
+    if (Board = nil) then begin Result := '{"success": false, "error": "No PCB document is currently active"}'; Exit; end;
+    xo := Board.XOrigin; yo := Board.YOrigin;
+
+    PCBServer.PreProcess;
+    Via := PCBServer.PCBObjectFactory(eViaObject, eNoDimension, eCreate_Default);
+    Via.x := MilsToCoord(Xm) + xo;
+    Via.y := MilsToCoord(Ym) + yo;
+    Via.Size := MilsToCoord(PadM);
+    Via.HoleSize := MilsToCoord(HoleM);
+    Via.LowLayer := eTopLayer;
+    Via.HighLayer := eBottomLayer;
+    if (HasNet) then
+    begin
+        Net := FindPcbNet(Board, NetName);
+        if (Net <> nil) then Via.Net := Net;
+    end;
+    Board.AddPCBObject(Via);
+    PCBServer.SendMessageToRobots(Via.I_ObjectAddress, c_Broadcast, PCBM_BoardRegisteration, c_NoEventData);
+    PCBServer.PostProcess;
+    Board.ViewManager_FullUpdate;
+
+    ResultProps := TStringList.Create;
+    try
+        AddJSONBoolean(ResultProps, 'success', True);
+        AddJSONNumber(ResultProps, 'x_mils', Xm);
+        AddJSONNumber(ResultProps, 'y_mils', Ym);
+        AddJSONNumber(ResultProps, 'pad_mils', PadM);
+        AddJSONNumber(ResultProps, 'hole_mils', HoleM);
+        if (HasNet) then AddJSONProperty(ResultProps, 'net', NetName);
+        OutputLines := TStringList.Create;
+        try OutputLines.Text := BuildJSONObject(ResultProps); Result := OutputLines.Text; finally OutputLines.Free; end;
+    finally ResultProps.Free; end;
+end;
+
+// Add a track segment between (x1,y1) and (x2,y2) mils on a chosen layer.
+// layer: "top"/"bottom"/"mid1"/"mid2". Optional net, width in mils.
+function ExecuteAddTrack(RequestData: TStringList): String;
+var
+    i, ValueStart : Integer;
+    NetName, LayerStr : String;
+    X1m,Y1m,X2m,Y2m,WidthM : Double;
+    HasNet : Boolean;
+    Board : IPCB_Board;
+    Track : IPCB_Track;
+    Net   : IPCB_Net;
+    xo, yo : Integer;
+    ResultProps, OutputLines : TStringList;
+begin
+    X1m:=0; Y1m:=0; X2m:=0; Y2m:=0; WidthM:=8; LayerStr:='top'; NetName:=''; HasNet:=False;
+    for i := 0 to RequestData.Count - 1 do
+    begin
+        if (Pos('"x1"', RequestData[i]) > 0) then begin ValueStart := Pos(':', RequestData[i]) + 1; X1m := StrToFloatDef(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), 0); end
+        else if (Pos('"y1"', RequestData[i]) > 0) then begin ValueStart := Pos(':', RequestData[i]) + 1; Y1m := StrToFloatDef(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), 0); end
+        else if (Pos('"x2"', RequestData[i]) > 0) then begin ValueStart := Pos(':', RequestData[i]) + 1; X2m := StrToFloatDef(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), 0); end
+        else if (Pos('"y2"', RequestData[i]) > 0) then begin ValueStart := Pos(':', RequestData[i]) + 1; Y2m := StrToFloatDef(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), 0); end
+        else if (Pos('"width_mils"', RequestData[i]) > 0) then begin ValueStart := Pos(':', RequestData[i]) + 1; WidthM := StrToFloatDef(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), 8); end
+        else if (Pos('"layer"', RequestData[i]) > 0) then begin ValueStart := Pos(':', RequestData[i]) + 1; LayerStr := LowerCase(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1))); end
+        else if (Pos('"net"', RequestData[i]) > 0) then begin ValueStart := Pos(':', RequestData[i]) + 1; NetName := TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)); if (NetName <> '') then HasNet := True; end;
+    end;
+
+    Board := PCBServer.GetCurrentPCBBoard;
+    if (Board = nil) then begin Result := '{"success": false, "error": "No PCB document is currently active"}'; Exit; end;
+    xo := Board.XOrigin; yo := Board.YOrigin;
+
+    PCBServer.PreProcess;
+    Track := PCBServer.PCBObjectFactory(eTrackObject, eNoDimension, eCreate_Default);
+    if (LayerStr = 'bottom') then Track.Layer := eBottomLayer
+    else if (LayerStr = 'mid1') then Track.Layer := eMidLayer1
+    else if (LayerStr = 'mid2') then Track.Layer := eMidLayer2
+    else Track.Layer := eTopLayer;
+    Track.x1 := MilsToCoord(X1m) + xo;
+    Track.y1 := MilsToCoord(Y1m) + yo;
+    Track.x2 := MilsToCoord(X2m) + xo;
+    Track.y2 := MilsToCoord(Y2m) + yo;
+    Track.Width := MilsToCoord(WidthM);
+    if (HasNet) then begin Net := FindPcbNet(Board, NetName); if (Net <> nil) then Track.Net := Net; end;
+    Board.AddPCBObject(Track);
+    PCBServer.SendMessageToRobots(Track.I_ObjectAddress, c_Broadcast, PCBM_BoardRegisteration, c_NoEventData);
+    PCBServer.PostProcess;
+    Board.ViewManager_FullUpdate;
+
+    ResultProps := TStringList.Create;
+    try
+        AddJSONBoolean(ResultProps, 'success', True);
+        AddJSONProperty(ResultProps, 'layer', LayerStr);
+        AddJSONNumber(ResultProps, 'x1_mils', X1m);
+        AddJSONNumber(ResultProps, 'y1_mils', Y1m);
+        AddJSONNumber(ResultProps, 'x2_mils', X2m);
+        AddJSONNumber(ResultProps, 'y2_mils', Y2m);
+        AddJSONNumber(ResultProps, 'width_mils', WidthM);
+        if (HasNet) then AddJSONProperty(ResultProps, 'net', NetName);
+        OutputLines := TStringList.Create;
+        try OutputLines.Text := BuildJSONObject(ResultProps); Result := OutputLines.Text; finally OutputLines.Free; end;
+    finally ResultProps.Free; end;
+end;
+
+// Delete the nearest FREE (non-component) via to (x,y) mils within tol mils.
+// For removing a stray/test via or ripping up stitching.
+function ExecuteDeleteViaNear(RequestData: TStringList): String;
+var
+    i, ValueStart : Integer;
+    Xm, Ym, TolM : Double;
+    Board : IPCB_Board;
+    Iter  : IPCB_BoardIterator;
+    Via, Best : IPCB_Via;
+    xo, yo, tx, ty : Integer;
+    TolMM, bestD, d, dx, dy, bx, by : Double;
+    Found : Boolean;
+    ResultProps, OutputLines : TStringList;
+begin
+    Xm := 0; Ym := 0; TolM := 20;
+    for i := 0 to RequestData.Count - 1 do
+    begin
+        if (Pos('"x"', RequestData[i]) > 0) then begin ValueStart := Pos(':', RequestData[i]) + 1; Xm := StrToFloatDef(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), 0); end
+        else if (Pos('"y"', RequestData[i]) > 0) then begin ValueStart := Pos(':', RequestData[i]) + 1; Ym := StrToFloatDef(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), 0); end
+        else if (Pos('"tol_mils"', RequestData[i]) > 0) then begin ValueStart := Pos(':', RequestData[i]) + 1; TolM := StrToFloatDef(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), 20); end;
+    end;
+
+    Board := PCBServer.GetCurrentPCBBoard;
+    if (Board = nil) then begin Result := '{"success": false, "error": "No PCB document is currently active"}'; Exit; end;
+    xo := Board.XOrigin; yo := Board.YOrigin;
+    tx := MilsToCoord(Xm) + xo; ty := MilsToCoord(Ym) + yo;
+    TolMM := CoordToMMs(MilsToCoord(TolM));
+
+    Best := nil; bestD := 1.0E9; bx := 0; by := 0;
+    Iter := Board.BoardIterator_Create;
+    Iter.AddFilter_ObjectSet(MkSet(eViaObject));
+    Iter.AddFilter_LayerSet(AllLayers);
+    Iter.AddFilter_Method(eProcessAll);
+    Via := Iter.FirstPCBObject;
+    while (Via <> nil) do
+    begin
+        if (Via.InComponent = False) then
+        begin
+            dx := CoordToMMs(Via.x - tx);
+            dy := CoordToMMs(Via.y - ty);
+            d := Sqrt(dx*dx + dy*dy);
+            if (d <= TolMM) and (d < bestD) then
+            begin
+                bestD := d; Best := Via;
+                bx := CoordToMMs(Via.x - xo) / 0.0254;
+                by := CoordToMMs(Via.y - yo) / 0.0254;
+            end;
+        end;
+        Via := Iter.NextPCBObject;
+    end;
+    Board.BoardIterator_Destroy(Iter);
+
+    Found := (Best <> nil);
+    if (Found) then
+    begin
+        PCBServer.PreProcess;
+        Board.RemovePCBObject(Best);
+        PCBServer.SendMessageToRobots(Board.I_ObjectAddress, c_Broadcast, PCBM_BoardRegisteration, c_NoEventData);
+        PCBServer.PostProcess;
+        Board.ViewManager_FullUpdate;
+    end;
+
+    ResultProps := TStringList.Create;
+    try
+        AddJSONBoolean(ResultProps, 'success', Found);
+        if (Found) then
+        begin
+            AddJSONNumber(ResultProps, 'deleted_x_mils', bx);
+            AddJSONNumber(ResultProps, 'deleted_y_mils', by);
+        end
+        else
+            AddJSONProperty(ResultProps, 'error', 'No free via within tolerance');
+        OutputLines := TStringList.Create;
+        try OutputLines.Text := BuildJSONObject(ResultProps); Result := OutputLines.Text; finally OutputLines.Free; end;
+    finally ResultProps.Free; end;
+end;
+
 // Function to apply a fab profile: raise the global rule FLOORS to the fab's minimums.
 // Params (mm): min_trace_mm, min_space_mm, via_hole_mm, via_pad_mm, annular_mm.
 // Touches only All-scoped Width/Clearance/RoutingVias rules (the global defaults) and

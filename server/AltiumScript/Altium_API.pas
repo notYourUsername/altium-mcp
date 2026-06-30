@@ -787,6 +787,12 @@ begin
             Result := ExecuteDeleteDesignRule(RequestData);
         'clone_rule':
             Result := ExecuteCloneRule(RequestData);
+        'add_via':
+            Result := ExecuteAddVia(RequestData);
+        'add_track':
+            Result := ExecuteAddTrack(RequestData);
+        'delete_via_near':
+            Result := ExecuteDeleteViaNear(RequestData);
         'apply_fab_profile':
             Result := ExecuteApplyFabProfile(RequestData);
         'fab_measure':
