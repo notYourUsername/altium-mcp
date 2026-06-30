@@ -785,6 +785,8 @@ begin
             Result := ExecuteCreateLengthMatchRule(RequestData);
         'delete_design_rule':
             Result := ExecuteDeleteDesignRule(RequestData);
+        'clone_rule':
+            Result := ExecuteCloneRule(RequestData);
         'apply_fab_profile':
             Result := ExecuteApplyFabProfile(RequestData);
         'fab_measure':

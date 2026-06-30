@@ -1584,6 +1584,48 @@ async def delete_design_rule(ctx: Context, rule_name: str) -> str:
 
 
 @mcp.tool()
+async def clone_rule(ctx: Context, source_name: str, new_name: str,
+                     scope1: str = "", scope2: str = "") -> str:
+    """
+    Clone an existing design rule and re-scope it. The clone copies ALL constraint
+    values from the source rule via Altium's Replicate - including the diff-pair gap,
+    impedance ohms and matched-length tolerance that are NOT settable directly from
+    DelphiScript in this Altium build - then changes only the rule's name and scope.
+
+    Workflow: keep one fully-configured "template" rule per standard (e.g. a 90-ohm
+    USB differential-pair rule, a 100-ohm diff rule, a 50-ohm single-ended impedance
+    rule) and stamp out correctly-configured, re-scoped copies for other net classes.
+
+    Args:
+        source_name: Exact name of the existing rule to copy from.
+        new_name: Name for the new cloned rule (must be unique).
+        scope1: Optional new primary scope query (e.g. "InNetClass('USB2')").
+                If omitted, the source rule's primary scope is kept.
+        scope2: Optional new secondary scope query. If omitted, the source's is kept.
+
+    Returns:
+        str: JSON object with the cloned rule's details (name, kind, scope,
+             descriptor), or an error if the source rule is missing.
+    """
+    logger.info(f"Cloning rule {source_name} -> {new_name}")
+
+    params = {"source_name": source_name, "new_name": new_name}
+    if scope1:
+        params["scope1"] = scope1
+    if scope2:
+        params["scope2"] = scope2
+
+    response = await altium_bridge.execute_command("clone_rule", params)
+
+    if not response.get("success", False):
+        error_msg = response.get("error", "Unknown error")
+        logger.error(f"Error cloning rule: {error_msg}")
+        return json.dumps({"error": f"Failed to clone rule: {error_msg}"})
+
+    return json.dumps(response.get("result", {}), indent=2)
+
+
+@mcp.tool()
 async def update_width_rule(ctx: Context, rule_name: str, min_mils: float, max_mils: float,
                             preferred_mils: float) -> str:
     """

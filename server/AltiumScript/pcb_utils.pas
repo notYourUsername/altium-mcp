@@ -772,6 +772,126 @@ begin
     end;
 end;
 
+// Function to clone an existing design rule and re-scope it. Replicate copies ALL
+// constraint values from the source rule (including the diff-pair gap, impedance
+// ohms and matched-length tolerance that AD25 does NOT expose to per-kind setters),
+// then only Name + Scope are changed - both confirmed-settable base properties.
+// Params: source_name, new_name, scope1 (optional), scope2 (optional).
+function ExecuteCloneRule(RequestData: TStringList): String;
+var
+    i, ValueStart : Integer;
+    SourceName, NewName, Scope1, Scope2, NewKind : String;
+    HasScope1, HasScope2 : Boolean;
+    Board   : IPCB_Board;
+    Iter    : IPCB_BoardIterator;
+    Rule, Found, NewRule : IPCB_Rule;
+    ResultProps, OutputLines : TStringList;
+begin
+    SourceName := '';
+    NewName := '';
+    Scope1 := '';
+    Scope2 := '';
+    HasScope1 := False;
+    HasScope2 := False;
+
+    for i := 0 to RequestData.Count - 1 do
+    begin
+        if (Pos('"source_name"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            SourceName := TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1));
+        end
+        else if (Pos('"new_name"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            NewName := TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1));
+        end
+        else if (Pos('"scope1"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            Scope1 := TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1));
+            HasScope1 := True;
+        end
+        else if (Pos('"scope2"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            Scope2 := TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1));
+            HasScope2 := True;
+        end;
+    end;
+
+    Board := PCBServer.GetCurrentPCBBoard;
+    if (Board = nil) then
+    begin
+        Result := '{"success": false, "error": "No PCB document is currently active"}';
+        Exit;
+    end;
+    if (SourceName = '') then
+    begin
+        Result := '{"success": false, "error": "No source_name provided"}';
+        Exit;
+    end;
+    if (NewName = '') then
+    begin
+        Result := '{"success": false, "error": "No new_name provided"}';
+        Exit;
+    end;
+
+    Found := nil;
+    Iter := Board.BoardIterator_Create;
+    Iter.AddFilter_ObjectSet(MkSet(eRuleObject));
+    Iter.AddFilter_LayerSet(AllLayers);
+    Iter.AddFilter_Method(eProcessAll);
+    Rule := Iter.FirstPCBObject;
+    while (Rule <> nil) do
+    begin
+        if (Rule.Name = SourceName) then
+        begin
+            Found := Rule;
+            Break;
+        end;
+        Rule := Iter.NextPCBObject;
+    end;
+    Board.BoardIterator_Destroy(Iter);
+
+    if (Found = nil) then
+    begin
+        Result := '{"success": false, "error": "Source rule not found"}';
+        Exit;
+    end;
+
+    PCBServer.PreProcess;
+    NewRule := Found.Replicate;
+    NewRule.Name := NewName;
+    if (HasScope1) then NewRule.Scope1Expression := Scope1;
+    if (HasScope2) then NewRule.Scope2Expression := Scope2;
+    Board.AddPCBObject(NewRule);
+    PCBServer.SendMessageToRobots(NewRule.I_ObjectAddress, c_Broadcast, PCBM_BoardRegisteration, c_NoEventData);
+    PCBServer.PostProcess;
+    Board.ViewManager_FullUpdate;
+
+    NewKind := NewRule.GetState_ShortDescriptorString;
+
+    ResultProps := TStringList.Create;
+    try
+        AddJSONBoolean(ResultProps, 'success', True);
+        AddJSONProperty(ResultProps, 'source_name', SourceName);
+        AddJSONProperty(ResultProps, 'new_name', NewName);
+        AddJSONProperty(ResultProps, 'rule_kind', NewKind);
+        AddJSONProperty(ResultProps, 'scope1', NewRule.Scope1Expression);
+        AddJSONProperty(ResultProps, 'descriptor', NewRule.Descriptor);
+        OutputLines := TStringList.Create;
+        try
+            OutputLines.Text := BuildJSONObject(ResultProps);
+            Result := OutputLines.Text;
+        finally
+            OutputLines.Free;
+        end;
+    finally
+        ResultProps.Free;
+    end;
+end;
+
 // Function to apply a fab profile: raise the global rule FLOORS to the fab's minimums.
 // Params (mm): min_trace_mm, min_space_mm, via_hole_mm, via_pad_mm, annular_mm.
 // Touches only All-scoped Width/Clearance/RoutingVias rules (the global defaults) and
