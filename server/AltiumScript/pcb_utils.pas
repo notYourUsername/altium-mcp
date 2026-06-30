@@ -931,14 +931,14 @@ var
     i, ValueStart : Integer;
     NetName : String;
     Xm, Ym, PadM, HoleM : Double;
-    HasNet : Boolean;
+    HasNet, NetFound : Boolean;
     Board : IPCB_Board;
     Via   : IPCB_Via;
     Net   : IPCB_Net;
     xo, yo : Integer;
     ResultProps, OutputLines : TStringList;
 begin
-    Xm := 0; Ym := 0; PadM := 24; HoleM := 12; NetName := ''; HasNet := False;
+    Xm := 0; Ym := 0; PadM := 24; HoleM := 12; NetName := ''; HasNet := False; NetFound := False;
     for i := 0 to RequestData.Count - 1 do
     begin
         if (Pos('"x"', RequestData[i]) > 0) then
@@ -968,7 +968,7 @@ begin
     if (HasNet) then
     begin
         Net := FindPcbNet(Board, NetName);
-        if (Net <> nil) then Via.Net := Net;
+        if (Net <> nil) then begin Via.Net := Net; NetFound := True; end;
     end;
     Board.AddPCBObject(Via);
     PCBServer.SendMessageToRobots(Via.I_ObjectAddress, c_Broadcast, PCBM_BoardRegisteration, c_NoEventData);
@@ -983,6 +983,7 @@ begin
         AddJSONNumber(ResultProps, 'pad_mils', PadM);
         AddJSONNumber(ResultProps, 'hole_mils', HoleM);
         if (HasNet) then AddJSONProperty(ResultProps, 'net', NetName);
+        AddJSONBoolean(ResultProps, 'net_found', NetFound);
         OutputLines := TStringList.Create;
         try OutputLines.Text := BuildJSONObject(ResultProps); Result := OutputLines.Text; finally OutputLines.Free; end;
     finally ResultProps.Free; end;
