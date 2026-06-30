@@ -1,0 +1,9 @@
+{
+  "profile": "usb2",
+  "description": "USB 2.0 high-speed differential pair (D+/D-). 90 ohm differential target.",
+  "source": "USB 2.0 spec / common 90-ohm diff-pair routing guidance - UNVERIFIED placeholder values, confirm against your stackup.",
+  "width_mils": 8.0,
+  "diff_gap_mils": 7.5,
+  "impedance_ohms": [85.0, 95.0],
+  "length_tolerance_mils": 5.0
+}

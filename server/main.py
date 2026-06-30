@@ -23,6 +23,10 @@ import re
 from bom import build_bom
 from activity import append_activity
 from fab import load_profile, find_profile, evaluate_dfm
+from signal import (load_profile as load_signal_profile,
+                    find_profile as find_signal_profile,
+                    list_profiles as list_signal_profiles,
+                    build_rule_commands as build_signal_rule_commands)
 
 # Configure logging
 logging.basicConfig(
@@ -53,6 +57,8 @@ RESPONSE_FILE = EXCHANGE_DIR / "response.json"
 ACTIVITY_LOG = EXCHANGE_DIR / "mcp_activity.log"
 # Fab-house capability profiles ship alongside the server.
 FAB_PROFILES_DIR = Path(__file__).resolve().parent / "fab_profiles"
+# High-speed signal (net-class) profiles ship alongside the server.
+SIGNAL_PROFILES_DIR = Path(__file__).resolve().parent / "signal_profiles"
 
 # Initialize FastMCP server
 mcp = FastMCP("AltiumMCP", description="Altium integration through the Model Context Protocol")
@@ -1573,6 +1579,205 @@ async def delete_design_rule(ctx: Context, rule_name: str) -> str:
         return json.dumps({"error": f"Failed to delete design rule: {error_msg}"})
 
     return json.dumps(response.get("result", {}), indent=2)
+
+
+@mcp.tool()
+async def update_width_rule(ctx: Context, rule_name: str, min_mils: float, max_mils: float,
+                            preferred_mils: float) -> str:
+    """
+    Update an existing Width Constraint design rule, found by exact name, setting its
+    per-layer min/max/preferred track widths across the whole layer stack. Use this to
+    retune a high-speed net class's routing width without recreating the rule.
+
+    Args:
+        rule_name: Exact name of the existing Width Constraint rule to modify.
+        min_mils: New minimum track width in mils.
+        max_mils: New maximum track width in mils.
+        preferred_mils: New preferred track width in mils.
+
+    Returns:
+        str: JSON object with the updated rule's details (or an error if the rule is
+             missing or is not a Width Constraint).
+    """
+    logger.info(f"Updating width rule {rule_name}")
+
+    response = await altium_bridge.execute_command(
+        "update_width_rule",
+        {"rule_name": rule_name, "min_mils": min_mils, "max_mils": max_mils,
+         "preferred_mils": preferred_mils},
+    )
+
+    if not response.get("success", False):
+        error_msg = response.get("error", "Unknown error")
+        logger.error(f"Error updating width rule: {error_msg}")
+        return json.dumps({"error": f"Failed to update width rule: {error_msg}"})
+
+    return json.dumps(response.get("result", {}), indent=2)
+
+
+@mcp.tool()
+async def create_diff_pair_rule(ctx: Context, rule_name: str, scope1: str, gap_mils: float,
+                                min_width_mils: float, max_width_mils: float,
+                                preferred_width_mils: float, max_uncoupled_mils: float) -> str:
+    """
+    Create a Differential Pairs Routing design rule on the current Altium PCB, scoped to
+    a differential-pair class. Sets the intra-pair gap, the width window, and the maximum
+    allowed uncoupled length.
+
+    Args:
+        rule_name: Name for the new rule.
+        scope1: Scope query, e.g. "InDifferentialPairClass('USB_Lines')".
+        gap_mils: Intra-pair gap target in mils.
+        min_width_mils: Minimum trace width in mils.
+        max_width_mils: Maximum trace width in mils.
+        preferred_width_mils: Preferred trace width in mils.
+        max_uncoupled_mils: Maximum uncoupled length in mils.
+
+    Returns:
+        str: JSON object with the created rule's details (or an error).
+    """
+    logger.info(f"Creating diff-pair rule {rule_name}")
+
+    response = await altium_bridge.execute_command(
+        "create_diff_pair_rule",
+        {"rule_name": rule_name, "scope1": scope1, "gap_mils": gap_mils,
+         "min_width_mils": min_width_mils, "max_width_mils": max_width_mils,
+         "preferred_width_mils": preferred_width_mils,
+         "max_uncoupled_mils": max_uncoupled_mils},
+    )
+
+    if not response.get("success", False):
+        error_msg = response.get("error", "Unknown error")
+        logger.error(f"Error creating diff-pair rule: {error_msg}")
+        return json.dumps({"error": f"Failed to create diff-pair rule: {error_msg}"})
+
+    return json.dumps(response.get("result", {}), indent=2)
+
+
+@mcp.tool()
+async def create_impedance_rule(ctx: Context, rule_name: str, scope1: str,
+                                min_ohms: float, max_ohms: float) -> str:
+    """
+    Create an Impedance Constraint design rule on the current Altium PCB, defining the
+    allowed characteristic-impedance window (in ohms) for the scoped nets.
+
+    Args:
+        rule_name: Name for the new rule.
+        scope1: Scope query, e.g. "InNetClass('USB')".
+        min_ohms: Minimum allowed impedance in ohms.
+        max_ohms: Maximum allowed impedance in ohms.
+
+    Returns:
+        str: JSON object with the created rule's details (or an error).
+    """
+    logger.info(f"Creating impedance rule {rule_name}")
+
+    response = await altium_bridge.execute_command(
+        "create_impedance_rule",
+        {"rule_name": rule_name, "scope1": scope1,
+         "min_ohms": min_ohms, "max_ohms": max_ohms},
+    )
+
+    if not response.get("success", False):
+        error_msg = response.get("error", "Unknown error")
+        logger.error(f"Error creating impedance rule: {error_msg}")
+        return json.dumps({"error": f"Failed to create impedance rule: {error_msg}"})
+
+    return json.dumps(response.get("result", {}), indent=2)
+
+
+@mcp.tool()
+async def create_length_match_rule(ctx: Context, rule_name: str, scope1: str,
+                                   tolerance_mils: float) -> str:
+    """
+    Create a Matched Net Lengths design rule on the current Altium PCB, defining the
+    allowed length-matching tolerance (in mils) for the scoped net class.
+
+    Args:
+        rule_name: Name for the new rule.
+        scope1: Scope query, e.g. "InNetClass('DDR_ADDR')".
+        tolerance_mils: Allowed length mismatch in mils.
+
+    Returns:
+        str: JSON object with the created rule's details (or an error).
+    """
+    logger.info(f"Creating length-match rule {rule_name}")
+
+    response = await altium_bridge.execute_command(
+        "create_length_match_rule",
+        {"rule_name": rule_name, "scope1": scope1, "tolerance_mils": tolerance_mils},
+    )
+
+    if not response.get("success", False):
+        error_msg = response.get("error", "Unknown error")
+        logger.error(f"Error creating length-match rule: {error_msg}")
+        return json.dumps({"error": f"Failed to create length-match rule: {error_msg}"})
+
+    return json.dumps(response.get("result", {}), indent=2)
+
+
+@mcp.tool()
+async def apply_signal_profile(ctx: Context, net_class: str, profile: str) -> str:
+    """
+    Apply a high-speed signal profile to a net class: resolve the named profile
+    (e.g. "usb2", "can") and create its width, differential-pair, impedance and
+    matched-length design rules, all scoped to InNetClass('<net_class>'). Each rule
+    is named after the net class (e.g. Width_<net_class>, DiffPair_<net_class>).
+
+    This modifies the board (multiple rules). Use list_signal_profiles to see options.
+
+    Args:
+        net_class: Name of the target net class (must already exist on the board).
+        profile: Signal profile name or file stem (e.g. "usb2", "can").
+
+    Returns:
+        str: JSON with each rule command's result (created / failed), and a summary.
+    """
+    logger.info(f"Applying signal profile {profile} to net class {net_class}")
+    path = find_signal_profile(SIGNAL_PROFILES_DIR, profile)
+    if path is None:
+        return json.dumps({"error": f"No signal profile found for '{profile}'. "
+                                    "Try list_signal_profiles."})
+    try:
+        prof = load_signal_profile(path)
+    except Exception as exc:
+        return json.dumps({"error": f"Invalid signal profile '{profile}': {exc}"})
+
+    commands = build_signal_rule_commands(prof, net_class)
+    results = []
+    created = 0
+    for cmd in commands:
+        response = await altium_bridge.execute_command(cmd["command"], cmd["params"])
+        ok = response.get("success", False)
+        entry = {"command": cmd["command"],
+                 "rule_name": cmd["params"].get("rule_name"),
+                 "ok": ok}
+        if ok:
+            created += 1
+            entry["result"] = response.get("result", {})
+        else:
+            entry["error"] = response.get("error", "Unknown error")
+        results.append(entry)
+
+    return json.dumps({
+        "profile": prof.get("profile", profile),
+        "net_class": net_class,
+        "rules_attempted": len(commands),
+        "rules_created": created,
+        "all_succeeded": created == len(commands),
+        "results": results,
+    }, indent=2)
+
+
+@mcp.tool()
+async def list_signal_profiles(ctx: Context) -> str:
+    """
+    List the available high-speed signal profiles that ship with the server.
+
+    Returns:
+        str: JSON array of {profile, file} for each profile.
+    """
+    return json.dumps(list_signal_profiles(SIGNAL_PROFILES_DIR), indent=2)
 
 
 @mcp.tool()

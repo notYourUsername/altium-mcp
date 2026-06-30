@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "High-speed signal profile",
+  "description": "Per-net-class high-speed routing targets (width, differential gap, impedance window, length-matching tolerance) used to seed Altium net-class design rules. All linear values are in mils; impedance is in ohms.",
+  "type": "object",
+  "required": ["profile", "width_mils", "diff_gap_mils", "impedance_ohms", "length_tolerance_mils"],
+  "properties": {
+    "profile": { "type": "string", "description": "Profile name, e.g. usb2" },
+    "description": { "type": "string" },
+    "source": { "type": "string", "description": "URL or doc the targets came from" },
+    "width_mils": { "type": "number", "exclusiveMinimum": 0, "description": "Target single-ended trace width" },
+    "diff_gap_mils": { "type": "number", "exclusiveMinimum": 0, "description": "Differential pair intra-pair gap" },
+    "impedance_ohms": {
+      "type": "array",
+      "description": "[min_ohms, max_ohms] allowed impedance window",
+      "items": { "type": "number", "exclusiveMinimum": 0 },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "length_tolerance_mils": { "type": "number", "minimum": 0, "description": "Matched-length tolerance" }
+  },
+  "additionalProperties": true
+}

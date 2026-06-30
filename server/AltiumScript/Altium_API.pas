@@ -750,6 +750,14 @@ begin
             Result := ExecuteCreateWidthRule(RequestData);
         'create_via_rule':
             Result := ExecuteCreateViaRule(RequestData);
+        'update_width_rule':
+            Result := ExecuteUpdateWidthRule(RequestData);
+        'create_diff_pair_rule':
+            Result := ExecuteCreateDiffPairRule(RequestData);
+        'create_impedance_rule':
+            Result := ExecuteCreateImpedanceRule(RequestData);
+        'create_length_match_rule':
+            Result := ExecuteCreateLengthMatchRule(RequestData);
         'delete_design_rule':
             Result := ExecuteDeleteDesignRule(RequestData);
         'apply_fab_profile':

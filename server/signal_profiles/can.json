@@ -1,0 +1,9 @@
+{
+  "profile": "can",
+  "description": "CAN bus differential pair (CANH/CANL). 120 ohm differential target.",
+  "source": "ISO 11898 / common 120-ohm CAN routing guidance - UNVERIFIED placeholder values, confirm against your stackup.",
+  "width_mils": 10.0,
+  "diff_gap_mils": 8.0,
+  "impedance_ohms": [108.0, 132.0],
+  "length_tolerance_mils": 10.0
+}
