@@ -781,7 +781,7 @@ function ExecuteCloneRule(RequestData: TStringList): String;
 var
     i, ValueStart : Integer;
     SourceName, NewName, Scope1, Scope2, NewKind : String;
-    HasScope1, HasScope2 : Boolean;
+    HasScope1, HasScope2, EnabledFlag : Boolean;
     Board   : IPCB_Board;
     Iter    : IPCB_BoardIterator;
     Rule, Found, NewRule : IPCB_Rule;
@@ -793,6 +793,7 @@ begin
     Scope2 := '';
     HasScope1 := False;
     HasScope2 := False;
+    EnabledFlag := True;
 
     for i := 0 to RequestData.Count - 1 do
     begin
@@ -817,6 +818,10 @@ begin
             ValueStart := Pos(':', RequestData[i]) + 1;
             Scope2 := TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1));
             HasScope2 := True;
+        end
+        else if (Pos('"enabled"', RequestData[i]) > 0) then
+        begin
+            if (Pos('false', RequestData[i]) > 0) then EnabledFlag := False;
         end;
     end;
 
@@ -865,6 +870,7 @@ begin
     NewRule.Name := NewName;
     if (HasScope1) then NewRule.Scope1Expression := Scope1;
     if (HasScope2) then NewRule.Scope2Expression := Scope2;
+    NewRule.DRCEnabled := EnabledFlag;
     Board.AddPCBObject(NewRule);
     PCBServer.SendMessageToRobots(NewRule.I_ObjectAddress, c_Broadcast, PCBM_BoardRegisteration, c_NoEventData);
     PCBServer.PostProcess;
@@ -879,6 +885,7 @@ begin
         AddJSONProperty(ResultProps, 'new_name', NewName);
         AddJSONProperty(ResultProps, 'rule_kind', NewKind);
         AddJSONProperty(ResultProps, 'scope1', NewRule.Scope1Expression);
+        AddJSONBoolean(ResultProps, 'enabled', EnabledFlag);
         AddJSONProperty(ResultProps, 'descriptor', NewRule.Descriptor);
         OutputLines := TStringList.Create;
         try

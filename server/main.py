@@ -1585,7 +1585,7 @@ async def delete_design_rule(ctx: Context, rule_name: str) -> str:
 
 @mcp.tool()
 async def clone_rule(ctx: Context, source_name: str, new_name: str,
-                     scope1: str = "", scope2: str = "") -> str:
+                     scope1: str = "", scope2: str = "", enabled: bool = True) -> str:
     """
     Clone an existing design rule and re-scope it. The clone copies ALL constraint
     values from the source rule via Altium's Replicate - including the diff-pair gap,
@@ -1602,14 +1602,17 @@ async def clone_rule(ctx: Context, source_name: str, new_name: str,
         scope1: Optional new primary scope query (e.g. "InNetClass('USB2')").
                 If omitted, the source rule's primary scope is kept.
         scope2: Optional new secondary scope query. If omitted, the source's is kept.
+        enabled: Whether the cloned rule is DRC-enabled. Set False to create an inert
+                 "template" rule that won't enforce until cloned again (default True).
 
     Returns:
         str: JSON object with the cloned rule's details (name, kind, scope,
              descriptor), or an error if the source rule is missing.
     """
-    logger.info(f"Cloning rule {source_name} -> {new_name}")
+    logger.info(f"Cloning rule {source_name} -> {new_name} (enabled={enabled})")
 
-    params = {"source_name": source_name, "new_name": new_name}
+    params = {"source_name": source_name, "new_name": new_name,
+              "enabled": "true" if enabled else "false"}
     if scope1:
         params["scope1"] = scope1
     if scope2:
