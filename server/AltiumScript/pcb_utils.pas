@@ -2792,3 +2792,332 @@ begin
         MissingArray.Free;
     end;
 end;
+
+// ===========================================================================
+// Routing & bring-up reads (read-only). Added for the routing-reads tool set.
+// ===========================================================================
+
+// Read-only: list nets that still have unrouted connections (ratsnest).
+// Best-effort: the connectivity/ratsnest API is implemented against
+// Board.GetState_PrimitiveCounter / IPCB_Connection and FLAGGED below - the
+// exact members must be confirmed against a live Altium session.
+function GetUnroutedNets(ROOT_DIR: String): String;
+var
+    Board       : IPCB_Board;
+    Iterator    : IPCB_BoardIterator;
+    Connection  : IPCB_Connection;
+    NetObj      : IPCB_Net;
+    Counts      : TStringList;   // name=value: net -> unrouted connection count
+    NetArray    : TStringList;
+    Props       : TStringList;
+    ResultProps : TStringList;
+    OutputLines : TStringList;
+    i           : Integer;
+    netName     : String;
+    cur         : Integer;
+begin
+    Result := '';
+
+    Board := PCBServer.GetCurrentPCBBoard;
+    if (Board = nil) then
+    begin
+        Result := '{"error": "No PCB document is currently active"}';
+        Exit;
+    end;
+
+    Counts := TStringList.Create;
+    try
+        // FLAG: eConnectionObject represents ratsnest connection lines. In Altium
+        // a Connection primitive that is NOT routed contributes to the net's
+        // ratsnest. Iterating eConnectionObject and counting per net is the
+        // documented best-effort approach but the precise "is routed" flag is
+        // uncertain - confirm Connection.Net and that the iterator only returns
+        // OUTSTANDING (unrouted) connections on a live board.
+        Iterator := Board.BoardIterator_Create;
+        Iterator.AddFilter_ObjectSet(MkSet(eConnectionObject));
+        Iterator.AddFilter_LayerSet(AllLayers);
+        Iterator.AddFilter_Method(eProcessAll);
+        Connection := Iterator.FirstPCBObject;
+        while (Connection <> nil) do
+        begin
+            NetObj := Connection.Net;
+            if (NetObj <> nil) then
+            begin
+                netName := NetObj.Name;
+                cur := StrToIntDef(Counts.Values[netName], 0);
+                Counts.Values[netName] := IntToStr(cur + 1);
+            end;
+            Connection := Iterator.NextPCBObject;
+        end;
+        Board.BoardIterator_Destroy(Iterator);
+
+        NetArray := TStringList.Create;
+        try
+            for i := 0 to Counts.Count - 1 do
+            begin
+                netName := Counts.Names[i];
+                cur := StrToIntDef(Counts.Values[netName], 0);
+                if (cur > 0) then
+                begin
+                    Props := TStringList.Create;
+                    try
+                        AddJSONProperty(Props, 'net', netName);
+                        AddJSONInteger(Props, 'unrouted_connections', cur);
+                        NetArray.Add(BuildJSONObject(Props, 1));
+                    finally
+                        Props.Free;
+                    end;
+                end;
+            end;
+
+            ResultProps := TStringList.Create;
+            try
+                AddJSONInteger(ResultProps, 'total_unrouted_nets', NetArray.Count);
+                AddJSONBoolean(ResultProps, 'connectivity_api_unconfirmed', True);
+                ResultProps.Add(BuildJSONArray(NetArray, 'nets'));
+                OutputLines := TStringList.Create;
+                try
+                    OutputLines.Text := BuildJSONObject(ResultProps);
+                    Result := WriteJSONToFile(OutputLines, ROOT_DIR+'\temp_unrouted_nets.json');
+                finally
+                    OutputLines.Free;
+                end;
+            finally
+                ResultProps.Free;
+            end;
+        finally
+            NetArray.Free;
+        end;
+    finally
+        Counts.Free;
+    end;
+end;
+
+// Read-only: connected pads as DESIGNATOR-PAD, grouped by net. If FilterNet is
+// non-empty only that net is emitted; otherwise every net with pads is returned.
+function GetNetContinuity(ROOT_DIR: String; FilterNet: String): String;
+var
+    Board       : IPCB_Board;
+    Iterator    : IPCB_BoardIterator;
+    Pad         : IPCB_Pad;
+    NetObj      : IPCB_Net;
+    NetNames    : TStringList;   // sorted unique net names
+    NetPads     : TStringList;   // name=value: net -> 'C1-1|U2-8|...'
+    NetArray    : TStringList;
+    PadArray    : TStringList;
+    Props       : TStringList;
+    ResultProps : TStringList;
+    OutputLines : TStringList;
+    i, j        : Integer;
+    netName     : String;
+    compName    : String;
+    padRef      : String;
+    cur         : String;
+    parts       : TStringList;
+begin
+    Result := '';
+
+    Board := PCBServer.GetCurrentPCBBoard;
+    if (Board = nil) then
+    begin
+        Result := '{"error": "No PCB document is currently active"}';
+        Exit;
+    end;
+
+    NetNames := TStringList.Create;
+    NetNames.Duplicates := dupIgnore;
+    NetNames.Sorted := True;
+    NetPads := TStringList.Create;
+    try
+        Iterator := Board.BoardIterator_Create;
+        Iterator.AddFilter_ObjectSet(MkSet(ePadObject));
+        Iterator.AddFilter_LayerSet(AllLayers);
+        Iterator.AddFilter_Method(eProcessAll);
+        Pad := Iterator.FirstPCBObject;
+        while (Pad <> nil) do
+        begin
+            if Pad.InComponent then
+            begin
+                NetObj := Pad.Net;
+                if (NetObj <> nil) then
+                begin
+                    netName := NetObj.Name;
+                    if (FilterNet = '') or (netName = FilterNet) then
+                    begin
+                        // Pad.Component gives the owning component; .Name.Text is designator.
+                        compName := Pad.Component.Name.Text;
+                        padRef := compName + '-' + Pad.Name;
+                        NetNames.Add(netName);
+                        cur := NetPads.Values[netName];
+                        if (cur = '') then
+                            NetPads.Values[netName] := padRef
+                        else
+                            NetPads.Values[netName] := cur + '|' + padRef;
+                    end;
+                end;
+            end;
+            Pad := Iterator.NextPCBObject;
+        end;
+        Board.BoardIterator_Destroy(Iterator);
+
+        NetArray := TStringList.Create;
+        try
+            for i := 0 to NetNames.Count - 1 do
+            begin
+                netName := NetNames[i];
+                PadArray := TStringList.Create;
+                parts := TStringList.Create;
+                try
+                    parts.Delimiter := '|';
+                    parts.StrictDelimiter := True;
+                    parts.DelimitedText := NetPads.Values[netName];
+                    for j := 0 to parts.Count - 1 do
+                        PadArray.Add('"' + JSONEscapeString(parts[j]) + '"');
+
+                    Props := TStringList.Create;
+                    try
+                        AddJSONProperty(Props, 'net', netName);
+                        AddJSONInteger(Props, 'pad_count', PadArray.Count);
+                        Props.Add(BuildJSONArray(PadArray, 'pads', 1));
+                        NetArray.Add(BuildJSONObject(Props, 1));
+                    finally
+                        Props.Free;
+                    end;
+                finally
+                    PadArray.Free;
+                    parts.Free;
+                end;
+            end;
+
+            ResultProps := TStringList.Create;
+            try
+                AddJSONInteger(ResultProps, 'total_nets', NetArray.Count);
+                ResultProps.Add(BuildJSONArray(NetArray, 'nets'));
+                OutputLines := TStringList.Create;
+                try
+                    OutputLines.Text := BuildJSONObject(ResultProps);
+                    Result := WriteJSONToFile(OutputLines, ROOT_DIR+'\temp_net_continuity.json');
+                finally
+                    OutputLines.Free;
+                end;
+            finally
+                ResultProps.Free;
+            end;
+        finally
+            NetArray.Free;
+        end;
+    finally
+        NetNames.Free;
+        NetPads.Free;
+    end;
+end;
+
+// Read-only: pads/vias flagged as test points (fab and/or assembly).
+// FLAG: the testpoint flag property names below
+// (Pad.IsTestpoint_Top / IsTestpoint_Bottom and the via equivalents) are the
+// best-known names but must be confirmed against a live Altium build - some
+// versions expose IsTestPoint(eTopLayer)/(eBottomLayer) methods instead.
+function GetTestpoints(ROOT_DIR: String): String;
+var
+    Board       : IPCB_Board;
+    Iterator    : IPCB_BoardIterator;
+    Pad         : IPCB_Pad;
+    Via         : IPCB_Via;
+    NetObj      : IPCB_Net;
+    TPArray     : TStringList;
+    Props       : TStringList;
+    ResultProps : TStringList;
+    OutputLines : TStringList;
+    netName     : String;
+    compName    : String;
+    isTop, isBot : Boolean;
+begin
+    Result := '';
+
+    Board := PCBServer.GetCurrentPCBBoard;
+    if (Board = nil) then
+    begin
+        Result := '{"error": "No PCB document is currently active"}';
+        Exit;
+    end;
+
+    TPArray := TStringList.Create;
+    try
+        // Pads flagged as test points
+        Iterator := Board.BoardIterator_Create;
+        Iterator.AddFilter_ObjectSet(MkSet(ePadObject));
+        Iterator.AddFilter_LayerSet(AllLayers);
+        Iterator.AddFilter_Method(eProcessAll);
+        Pad := Iterator.FirstPCBObject;
+        while (Pad <> nil) do
+        begin
+            isTop := Pad.IsTestpoint_Top;
+            isBot := Pad.IsTestpoint_Bottom;
+            if (isTop or isBot) then
+            begin
+                if (Pad.Net <> nil) then netName := Pad.Net.Name else netName := '';
+                if Pad.InComponent then compName := Pad.Component.Name.Text else compName := '';
+                Props := TStringList.Create;
+                try
+                    AddJSONProperty(Props, 'type', 'pad');
+                    AddJSONProperty(Props, 'designator', compName);
+                    AddJSONProperty(Props, 'pad', Pad.Name);
+                    AddJSONProperty(Props, 'net', netName);
+                    AddJSONBoolean(Props, 'testpoint_top', isTop);
+                    AddJSONBoolean(Props, 'testpoint_bottom', isBot);
+                    TPArray.Add(BuildJSONObject(Props, 1));
+                finally
+                    Props.Free;
+                end;
+            end;
+            Pad := Iterator.NextPCBObject;
+        end;
+        Board.BoardIterator_Destroy(Iterator);
+
+        // Vias flagged as test points
+        Iterator := Board.BoardIterator_Create;
+        Iterator.AddFilter_ObjectSet(MkSet(eViaObject));
+        Iterator.AddFilter_LayerSet(AllLayers);
+        Iterator.AddFilter_Method(eProcessAll);
+        Via := Iterator.FirstPCBObject;
+        while (Via <> nil) do
+        begin
+            isTop := Via.IsTestpoint_Top;
+            isBot := Via.IsTestpoint_Bottom;
+            if (isTop or isBot) then
+            begin
+                if (Via.Net <> nil) then netName := Via.Net.Name else netName := '';
+                Props := TStringList.Create;
+                try
+                    AddJSONProperty(Props, 'type', 'via');
+                    AddJSONProperty(Props, 'net', netName);
+                    AddJSONBoolean(Props, 'testpoint_top', isTop);
+                    AddJSONBoolean(Props, 'testpoint_bottom', isBot);
+                    TPArray.Add(BuildJSONObject(Props, 1));
+                finally
+                    Props.Free;
+                end;
+            end;
+            Via := Iterator.NextPCBObject;
+        end;
+        Board.BoardIterator_Destroy(Iterator);
+
+        ResultProps := TStringList.Create;
+        try
+            AddJSONInteger(ResultProps, 'total_testpoints', TPArray.Count);
+            AddJSONBoolean(ResultProps, 'testpoint_property_unconfirmed', True);
+            ResultProps.Add(BuildJSONArray(TPArray, 'testpoints'));
+            OutputLines := TStringList.Create;
+            try
+                OutputLines.Text := BuildJSONObject(ResultProps);
+                Result := WriteJSONToFile(OutputLines, ROOT_DIR+'\temp_testpoints.json');
+            finally
+                OutputLines.Free;
+            end;
+        finally
+            ResultProps.Free;
+        end;
+    finally
+        TPArray.Free;
+    end;
+end;

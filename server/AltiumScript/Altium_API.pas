@@ -708,6 +708,31 @@ begin
     end;
 end;
 
+// Extract the get net continuity logic (optional net_name filter)
+function ExecuteGetNetContinuity(RequestData: TStringList): String;
+var
+    ParamValue: String;
+    i, ValueStart: Integer;
+    NetName: String;
+begin
+    NetName := '';
+
+    // Parse the optional net_name parameter from the request
+    for i := 0 to RequestData.Count - 1 do
+    begin
+        if (Pos('"net_name"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            ParamValue := Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1);
+            ParamValue := TrimJSON(ParamValue);
+            NetName := ParamValue;
+            Break;
+        end;
+    end;
+
+    Result := GetNetContinuity(ROOT_DIR, NetName);
+end;
+
 // Function to execute a command with parameters
 function ExecuteCommand(CommandName: String): String;
 begin
@@ -764,6 +789,12 @@ begin
             Result := GetBoardInfo(ROOT_DIR);
         'get_nets_with_length':
             Result := GetNetsWithLength(ROOT_DIR);
+        'get_unrouted_nets':
+            Result := GetUnroutedNets(ROOT_DIR);
+        'get_net_continuity':
+            Result := ExecuteGetNetContinuity(RequestData);
+        'get_testpoints':
+            Result := GetTestpoints(ROOT_DIR);
         'get_selected_components_coordinates':
             Result := GetSelectedComponentsCoordinates(ROOT_DIR); 
 		'set_component_position':

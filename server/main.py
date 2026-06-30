@@ -24,6 +24,7 @@ from bom import build_bom
 from activity import append_activity
 from fab import load_profile, find_profile, evaluate_dfm
 from impedance import solve_width_for_impedance, microstrip_z0, stripline_z0
+from decoupling import audit_decoupling
 
 # Configure logging
 logging.basicConfig(
@@ -1876,6 +1877,161 @@ async def get_nets_with_length(ctx: Context) -> str:
 
     logger.info("Retrieved nets with length")
     return json.dumps(data, indent=2)
+
+
+@mcp.tool()
+async def get_unrouted_nets(ctx: Context) -> str:
+    """
+    Get the nets that still have unrouted connections (outstanding ratsnest) on
+    the current Altium PCB. Useful for routing-completion and bring-up review.
+
+    NOTE: the underlying connectivity/ratsnest API is best-effort. The response
+    includes a "connectivity_api_unconfirmed" flag indicating the result should
+    be sanity-checked against Altium's own routed/unrouted indicators.
+
+    Returns:
+        str: JSON object with total_unrouted_nets and a nets array
+             (each: net, unrouted_connections)
+    """
+    logger.info("Getting unrouted nets")
+
+    response = await altium_bridge.execute_command("get_unrouted_nets", {})
+
+    if not response.get("success", False):
+        error_msg = response.get("error", "Unknown error")
+        logger.error(f"Error getting unrouted nets: {error_msg}")
+        return json.dumps({"error": f"Failed to get unrouted nets: {error_msg}"})
+
+    data = response.get("result", {})
+    if not data:
+        return json.dumps({"message": "No active PCB document"})
+
+    logger.info("Retrieved unrouted nets")
+    return json.dumps(data, indent=2)
+
+
+@mcp.tool()
+async def get_net_continuity(ctx: Context, net_name: str = "") -> str:
+    """
+    Get the connected pads (as DESIGNATOR-PAD references) grouped by net on the
+    current Altium PCB. Lets you see exactly what is physically connected to each
+    net in the layout - useful for continuity/bring-up checks.
+
+    Args:
+        net_name (str): Optional. If provided, only that net is returned;
+                        otherwise every net with pads is returned.
+
+    Returns:
+        str: JSON object with total_nets and a nets array
+             (each: net, pad_count, pads[])
+    """
+    logger.info(f"Getting net continuity (net_name={net_name or '(all)'})")
+
+    params = {}
+    if net_name:
+        params["net_name"] = net_name
+
+    response = await altium_bridge.execute_command("get_net_continuity", params)
+
+    if not response.get("success", False):
+        error_msg = response.get("error", "Unknown error")
+        logger.error(f"Error getting net continuity: {error_msg}")
+        return json.dumps({"error": f"Failed to get net continuity: {error_msg}"})
+
+    data = response.get("result", {})
+    if not data:
+        return json.dumps({"message": "No active PCB document"})
+
+    logger.info("Retrieved net continuity")
+    return json.dumps(data, indent=2)
+
+
+@mcp.tool()
+async def get_testpoints(ctx: Context) -> str:
+    """
+    Get the pads and vias flagged as test points (fab and/or assembly side) on
+    the current Altium PCB. Useful for bring-up and test-coverage review.
+
+    NOTE: the testpoint flag property names are version-dependent; the response
+    includes a "testpoint_property_unconfirmed" flag indicating the result
+    should be sanity-checked against Altium's testpoint settings.
+
+    Returns:
+        str: JSON object with total_testpoints and a testpoints array
+             (each: type, designator/net, testpoint_top, testpoint_bottom)
+    """
+    logger.info("Getting testpoints")
+
+    response = await altium_bridge.execute_command("get_testpoints", {})
+
+    if not response.get("success", False):
+        error_msg = response.get("error", "Unknown error")
+        logger.error(f"Error getting testpoints: {error_msg}")
+        return json.dumps({"error": f"Failed to get testpoints: {error_msg}"})
+
+    data = response.get("result", {})
+    if not data:
+        return json.dumps({"message": "No active PCB document"})
+
+    logger.info("Retrieved testpoints")
+    return json.dumps(data, indent=2)
+
+
+@mcp.tool()
+async def get_power_decoupling_audit(ctx: Context) -> str:
+    """
+    Audit decoupling/bypass capacitors per power-supply net on the current
+    Altium PCB. For every net that looks like a power rail (e.g. 3V3, 1V8, +5V,
+    VCC, VDD, VBAT, ...), lists the capacitors connected to it so you can spot
+    under-bypassed rails during bring-up review.
+
+    The grouping is done in pure Python (server/decoupling.py) from the component
+    list (get_all_component_data) and per-net pad membership (get_net_continuity).
+
+    Returns:
+        str: JSON object with total_power_nets, total_decoupling_caps,
+             undecoupled_power_nets, and a power_nets array
+             (each: net, capacitor_count, capacitors[], decoupled)
+    """
+    logger.info("Getting power decoupling audit")
+
+    # 1. Component list (for capacitor classification)
+    comp_response = await altium_bridge.execute_command("get_all_component_data", {})
+    if not comp_response.get("success", False):
+        error_msg = comp_response.get("error", "Unknown error")
+        logger.error(f"Error getting component data: {error_msg}")
+        return json.dumps({"error": f"Failed to get component data: {error_msg}"})
+
+    components_data = comp_response.get("result", [])
+    if isinstance(components_data, str):
+        try:
+            components = json.loads(components_data)
+        except json.JSONDecodeError:
+            components = []
+    else:
+        components = components_data or []
+
+    # 2. Per-net pad membership
+    cont_response = await altium_bridge.execute_command("get_net_continuity", {})
+    if not cont_response.get("success", False):
+        error_msg = cont_response.get("error", "Unknown error")
+        logger.error(f"Error getting net continuity: {error_msg}")
+        return json.dumps({"error": f"Failed to get net continuity: {error_msg}"})
+
+    continuity = cont_response.get("result", {})
+    if isinstance(continuity, str):
+        try:
+            continuity = json.loads(continuity)
+        except json.JSONDecodeError:
+            continuity = {}
+
+    # Flatten continuity nets array into {net: [pad refs]}
+    net_pads = {}
+    for entry in (continuity or {}).get("nets", []):
+        net_pads[entry.get("net", "")] = entry.get("pads", [])
+
+    logger.info("Built power decoupling audit")
+    return json.dumps(audit_decoupling(components, net_pads), indent=2)
 
 
 @mcp.tool()
