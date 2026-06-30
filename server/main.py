@@ -263,7 +263,7 @@ class AltiumBridge:
             # Run the Altium script
             success = await self.run_altium_script()
             if not success:
-                return {"success": False, "error": "Failed to run Altium script"}
+                return {"success": False, "error": getattr(self, "last_error", "Failed to run Altium script")}
             
             # Wait for the response file
             logger.info(f"Waiting for response file to appear...")
@@ -360,8 +360,19 @@ class AltiumBridge:
 
         return virtual_path
 
+    def _count_altium_instances(self) -> int:
+        """Count running Altium (X2.EXE) processes. Returns -1 if it can't tell."""
+        try:
+            out = subprocess.run(
+                ["tasklist", "/FI", "IMAGENAME eq X2.EXE", "/NH"],
+                capture_output=True, text=True, timeout=10).stdout
+            return sum(1 for line in out.splitlines() if "X2.EXE" in line)
+        except Exception:
+            return -1
+
     async def run_altium_script(self) -> bool:
         """Run the Altium bridge script"""
+        self.last_error = "Failed to run Altium script"
         if not os.path.exists(self.config.altium_exe_path):
             logger.error(f"Altium executable not found at: {self.config.altium_exe_path}")
             print(f"Error: Altium executable not found. Please check the configuration.")
@@ -376,6 +387,21 @@ class AltiumBridge:
             # Resolve MSIX-virtualized path so Altium (an external process
             # outside the MSIX sandbox) can find the script files
             script_path = self._resolve_msix_path(self.config.script_path)
+
+            # Guard against the X2.EXE pileup: the -R RunScript forward can't reliably
+            # target a specific instance, so if more than one Altium is running, requests
+            # may land in a blank instance (silent timeout). Surface it as a clear error
+            # instead of adding yet another instance to the pile.
+            count = self._count_altium_instances()
+            if count > 1:
+                self.last_error = (
+                    f"{count} Altium (X2.EXE) instances are running - the bridge can't tell "
+                    f"which one has your board, so requests may hang. Close all Altium windows "
+                    f"except the one with your PcbDoc open, then retry.")
+                logger.error(self.last_error)
+                return False
+            if count == 0:
+                logger.warning("No Altium instance running; the bridge will try to cold-start one.")
 
             # Command format: "X2.EXE" -RScriptingSystem:RunScript(ProjectName="path\file.PrjScr"|ProcName="ModuleName>Run")
             command = f'"{self.config.altium_exe_path}" -RScriptingSystem:RunScript(ProjectName="{script_path}"^|ProcName="Altium_API>Run")'
@@ -1492,7 +1518,7 @@ async def stitch_vias(ctx: Context, x1: float, y1: float, x2: float, y2: float,
                        "pitch_mils": pitch_mils, "vias": placed}, indent=2)
 
 
-SERVER_VERSION = "2026-06-30-b7"
+SERVER_VERSION = "2026-06-30-b8"
 
 
 @mcp.tool()
@@ -3311,14 +3337,20 @@ async def create_pcb_footprint(ctx: Context, footprint_name: str, description: s
 @mcp.tool()
 async def get_server_status(ctx: Context) -> str:
     """Get the current status of the Altium MCP server"""
+    instances = altium_bridge._count_altium_instances()
     status = {
         "server": "Running",
+        "version": SERVER_VERSION,
         "altium_exe": altium_bridge.config.altium_exe_path,
         "script_path": altium_bridge.config.script_path,
         "altium_found": os.path.exists(altium_bridge.config.altium_exe_path),
         "script_found": os.path.exists(altium_bridge.config.script_path),
+        "altium_instances": instances,
+        "bridge_healthy": instances == 1,
+        "instances_note": ("OK - exactly one Altium instance" if instances == 1 else
+                           ("No Altium running - open it with your board" if instances == 0 else
+                            f"{instances} Altium instances - close all but the one with your board (bridge will hang otherwise)")),
     }
-    
     return json.dumps(status, indent=2)
 
 if __name__ == "__main__":
