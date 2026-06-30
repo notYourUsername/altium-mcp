@@ -1492,6 +1492,113 @@ async def stitch_vias(ctx: Context, x1: float, y1: float, x2: float, y2: float,
                        "pitch_mils": pitch_mils, "vias": placed}, indent=2)
 
 
+def _is_power_net(net: str) -> bool:
+    """Heuristic: is this net name a power rail (not ground)?"""
+    if not net:
+        return False
+    n = net.upper()
+    if n in ("GND", "AGND", "DGND", "GNDA", "PGND", "VSS", "VSSA"):
+        return False
+    if any(k in n for k in ("VCC", "VDD", "VBAT", "VAA", "VREF", "VIN", "VOUT", "VPP", "VDDA")):
+        return True
+    import re as _re
+    if _re.match(r"^\+?\d+V\d*$", n) or _re.search(r"\d+V\d", n) or n.endswith("_RF"):
+        return True
+    return False
+
+
+@mcp.tool()
+async def fanout_pads(ctx: Context, cmp_designator: str, dx: float = 25, dy: float = 25,
+                      layer: str = "bottom", width_mils: float = 6,
+                      via_pad_mils: float = 24, via_hole_mils: float = 12) -> str:
+    """
+    Fan out every netted pad of a component: drop a via at an offset from each pad
+    (on the pad's net) plus a short escape track from pad to via. Handy for QFN/BGA
+    escape routing. Adds copper - run a DRC afterward and tune dx/dy/width to fit.
+
+    Args:
+        cmp_designator: Component to fan out (e.g. "U2").
+        dx, dy: Via offset from each pad in mils.
+        layer: Escape-track layer ("top"/"bottom"/"mid1"/"mid2").
+        width_mils: Escape-track width.
+        via_pad_mils, via_hole_mils: Via pad and drill diameters.
+    """
+    resp = await altium_bridge.execute_command("get_component_pins", {"cmp_designators": [cmp_designator]})
+    if not resp.get("success", False):
+        return json.dumps({"success": False, "error": resp.get("error", "get_component_pins failed")})
+    data = resp.get("result", [])
+    pins = []
+    for entry in (data if isinstance(data, list) else []):
+        if entry.get("designator") == cmp_designator:
+            pins = entry.get("pins", [])
+            break
+    if not pins:
+        return json.dumps({"success": False, "error": f"No pins found for {cmp_designator}"})
+
+    out = []
+    for p in pins:
+        net = (p.get("net") or "").strip()
+        if not net:
+            continue
+        px, py = float(p.get("x", 0)), float(p.get("y", 0))
+        vx, vy = px + dx, py + dy
+        rv = await altium_bridge.execute_command("add_via", {
+            "x": vx, "y": vy, "net": net, "pad_mils": via_pad_mils, "hole_mils": via_hole_mils})
+        rt = await altium_bridge.execute_command("add_track", {
+            "x1": px, "y1": py, "x2": vx, "y2": vy,
+            "layer": layer, "width_mils": width_mils, "net": net})
+        out.append({"pad": p.get("name"), "net": net,
+                    "via_ok": bool(rv.get("success", False)),
+                    "track_ok": bool(rt.get("success", False))})
+    return json.dumps({"success": True, "component": cmp_designator,
+                       "fanned_pads": len(out), "pads": out}, indent=2)
+
+
+@mcp.tool()
+async def auto_place_decoupling(ctx: Context, ic_designator: str, offset_mils: float = 40) -> str:
+    """
+    Rough-place decoupling caps next to their IC's power pins. For each power pin of
+    the IC, finds a capacitor on that net and moves it just beside the pin. This is a
+    starting placement to tidy by hand - not a final layout.
+
+    Args:
+        ic_designator: The IC whose decoupling caps to place (e.g. "U2").
+        offset_mils: How far from the power pin to place each cap.
+    """
+    resp = await altium_bridge.execute_command("get_component_pins", {"cmp_designators": [ic_designator]})
+    if not resp.get("success", False):
+        return json.dumps({"success": False, "error": resp.get("error", "get_component_pins failed")})
+    data = resp.get("result", [])
+    pins = []
+    for entry in (data if isinstance(data, list) else []):
+        if entry.get("designator") == ic_designator:
+            pins = entry.get("pins", [])
+            break
+    power_pins = [p for p in pins if _is_power_net(p.get("net"))]
+    if not power_pins:
+        return json.dumps({"success": False, "error": f"No power pins found on {ic_designator}"})
+
+    used = set()
+    moves = []
+    for pp in power_pins:
+        net = pp.get("net")
+        cont = await altium_bridge.execute_command("get_net_continuity", {"net_name": net})
+        cnets = cont.get("result", {}).get("nets", []) if cont.get("success", False) else []
+        pads = cnets[0].get("pads", []) if cnets else []
+        caps = [pad.split("-")[0] for pad in pads if pad.split("-")[0].startswith("C")]
+        cap = next((c for c in caps if c not in used), None)
+        if not cap:
+            continue
+        used.add(cap)
+        nx, ny = float(pp.get("x", 0)) + offset_mils, float(pp.get("y", 0))
+        r = await altium_bridge.execute_command(
+            "set_component_position", {"designator": cap, "x": nx, "y": ny, "rotation": -1})
+        moves.append({"cap": cap, "power_pin": pp.get("name"), "net": net,
+                      "placed_at_mils": [nx, ny], "ok": bool(r.get("success", False))})
+    return json.dumps({"success": True, "ic": ic_designator,
+                       "placed": len(moves), "moves": moves}, indent=2)
+
+
 @mcp.tool()
 async def get_net_classes(ctx: Context) -> str:
     """
