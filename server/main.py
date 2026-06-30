@@ -1492,6 +1492,99 @@ async def stitch_vias(ctx: Context, x1: float, y1: float, x2: float, y2: float,
                        "pitch_mils": pitch_mils, "vias": placed}, indent=2)
 
 
+SERVER_VERSION = "2026-06-30-b5"
+
+
+@mcp.tool()
+async def get_server_version(ctx: Context) -> str:
+    """
+    Report which build of the MCP server this chat is bound to. The version string is
+    compiled into the running process, so if it's older than expected, the chat is
+    talking to a STALE server process - restart the extension and open a new chat.
+    Use this whenever a tool seems missing or behaves like old code.
+    """
+    return json.dumps({
+        "success": True,
+        "version": SERVER_VERSION,
+        "note": ("If this version is older than the latest deploy, this chat is bound "
+                 "to a stale server process. Restart the extension and open a new chat."),
+    }, indent=2)
+
+
+@mcp.tool()
+async def run_self_test(ctx: Context) -> str:
+    """
+    One-call health check: exercise the server's read-only bridge commands and report
+    pass/fail for each. Read-only - does not modify the board (no DRC repour). Run it
+    after a restart/update to confirm the server is healthy and a PCB is active.
+    """
+    commands = [
+        "get_board_info", "get_all_nets", "get_all_designators", "get_nets_with_length",
+        "get_unrouted_nets", "get_net_continuity", "get_pcb_rules", "get_pcb_layers",
+        "get_pcb_layer_stackup", "get_net_classes", "get_drc_violations",
+        "get_output_job_containers", "get_all_component_data",
+    ]
+    results = []
+    passed = 0
+    for cmd in commands:
+        try:
+            r = await altium_bridge.execute_command(cmd, {})
+            ok = bool(r.get("success", False))
+            err = None if ok else (r.get("error") if isinstance(r, dict) else "failed")
+        except Exception as e:
+            ok, err = False, str(e)
+        if ok:
+            passed += 1
+        results.append({"command": cmd, "ok": ok, "error": err})
+    return json.dumps({
+        "success": True,
+        "version": SERVER_VERSION,
+        "passed": passed,
+        "total": len(commands),
+        "all_passed": passed == len(commands),
+        "results": results,
+    }, indent=2)
+
+
+@mcp.tool()
+async def design_review(ctx: Context) -> str:
+    """
+    One-call board health snapshot aggregating several read-only checks: board info,
+    DRC violations grouped by type, unrouted signal-net count, and rule count. For the
+    DFM check run check_against_fab('PCBWay') and for decoupling run
+    get_power_decoupling_audit (those are separate tools).
+    """
+    out = {"success": True, "version": SERVER_VERSION}
+
+    bi = await altium_bridge.execute_command("get_board_info", {})
+    out["board"] = bi.get("result", {}) if bi.get("success", False) else {"error": bi.get("error")}
+
+    drc = await altium_bridge.execute_command("get_drc_violations", {})
+    viol = drc.get("result", {}).get("violations", []) if drc.get("success", False) else []
+    groups = {}
+    for v in viol:
+        nm = v.get("name", "")
+        t = nm.split(":", 1)[1].strip() if ":" in nm else (nm.strip() or "Unknown")
+        groups[t] = groups.get(t, 0) + 1
+    out["drc"] = {"total": len(viol),
+                  "by_type": dict(sorted(groups.items(), key=lambda kv: kv[1], reverse=True))}
+
+    rats = await altium_bridge.execute_command("get_unrouted_nets", {})
+    rnets = rats.get("result", {}).get("nets", []) if rats.get("success", False) else []
+    unrouted_sig = sorted(r.get("net") for r in rnets
+                          if int(r.get("unrouted_connections", 0)) > 0 and not r.get("has_pour", False))
+    out["routing"] = {"unrouted_signal_count": len(unrouted_sig),
+                      "unrouted_signal_nets": unrouted_sig[:40]}
+
+    rules = await altium_bridge.execute_command("get_pcb_rules", {})
+    rlist = rules.get("result", []) if rules.get("success", False) else []
+    out["rules_count"] = len(rlist) if isinstance(rlist, list) else None
+
+    out["note"] = ("DFM: run check_against_fab('PCBWay'); decoupling: run "
+                   "get_power_decoupling_audit. Both are separate tools.")
+    return json.dumps(out, indent=2)
+
+
 def _is_power_net(net: str) -> bool:
     """Heuristic: is this net name a power rail (not ground)?"""
     if not net:
