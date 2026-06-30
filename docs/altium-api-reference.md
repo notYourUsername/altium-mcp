@@ -131,6 +131,24 @@ type `Rule.` and read the property list; paste it here.
 
 ---
 
+## Useful global constants (from the global code-completion dump)
+
+Coordinate scale (confirms the overflow gotcha): **1 mm = 393701 internal coords**, so
+**1 mil = 10000 coords**. Handy literals: `c1_00MM=393701`, `c0_25MM=98425`,
+`c0_50MM=196850`, `c10_0MM=3937008`, `c100_0MM=39370078`, `c1000_0MM=393700787`.
+Prefer `MMsToCoord()`/`CoordToMMs()` over raw literals.
+
+Layer integer IDs (`c*`): `cBottomLayer=33`, `cBottomOverlay=35`, `cBottomPaste=37`,
+`cBottomSolder=39`, `cConnectLayer=76`, `cBackGroundLayer=77`, `cDRCErrorLayer=78`,
+`cDRCDetailLayer=79`, `cBottomPadMasterPlot=86`. Sets: `AllLayers`, `AllPrimitives=7766014`,
+`AllObjects=8388606`. (Top-side layer IDs + the `e*Layer`/`e*Object` enums are in the `e`
+section of the global list — capture when available.)
+
+> The full global scope (thousands of `const`/`function` entries) is always available via
+> code-completion; only the curated subsets above are archived here. Don't paste the whole
+> thing — the valuable remaining piece is the `e*Object` (iterator filters) and `e*Layer`
+> (layer enums) block, plus per-rule-object property lists (via `Rule.` completion).
+
 ## DelphiScript gotchas (hard-won — read before writing scripts)
 
 - **Case-insensitive identifiers**: `BR` and `bR` are the SAME name -> "Identifier redeclared".
@@ -154,3 +172,46 @@ type `Rule.` and read the property list; paste it here.
   restart. Python (`main.py` etc.) is loaded at server start -> Python changes need a restart.
 - A chat's MCP tool list is frozen when the chat connects; tools added afterward need a new
   chat (or the stale server process to be cleared) before they're callable.
+
+
+## High-speed rule creation — LIVE-CONFIRMED behavior (AD25)
+
+Confirmed enums (all create successfully via `PCBRuleFactory`):
+- Differential Pairs Routing: `eRule_DifferentialPairsRouting`
+- Impedance Constraint:       `eRule_MaxMinImpedance`
+- Matched Net Lengths:        `eRule_MatchedLengths`
+
+`IPCB_Rule` is one flattened interface, so a property valid for ANY rule kind
+compiles regardless of the factory kind; only names that exist on NO kind throw
+"Undeclared identifier" — a compiler MODAL at runtime, which surfaces to the MCP
+client as a request timeout / "Stream closed".
+
+**Diff-pair WIDTH is settable** and was confirmed landing on the board. It is a
+PER-LAYER INDEXED property — identical idiom to the width rule:
+
+```pascal
+LS := Board.LayerStack_V7;
+Lo := LS.FirstLayer;
+while (Lo <> nil) do begin
+    Rule.MinWidth[Lo.LayerID] := MMsToCoord(mils * 0.0254);
+    Rule.MaxWidth[Lo.LayerID] := MMsToCoord(mils * 0.0254);
+    if (Lo = LS.LastLayer) then Break;
+    Lo := LS.NextLayer(Lo);
+end;
+```
+
+Scalar (non-indexed) `Rule.MinWidth := X` on a routing rule throws
+**"wrong number of params"** — it MUST be indexed by layer.
+
+**NOT script-settable in AD25** (all throw "Undeclared identifier"; left at Altium
+defaults; the reader still parses their values from the descriptor string):
+- Diff-pair gap:             `MinGap` / `MaxGap` / `PreferedGap`
+- Diff-pair preferred width: `FavoredWidth` and indexed `PreferedWidth` both rejected
+- Impedance ohms:            `MinImpedance` / `MaxImpedance`
+- Matched-length tolerance:  `MatchTolerance`
+
+These must be set in the PCB Rules dialog. The three `create_*` tools therefore
+create a correctly-typed, correctly-scoped rule (diff-pair also sets min/max
+width) and return a `constraint_note` telling the user to set the specialized
+value in the GUI.
+

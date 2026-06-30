@@ -3275,6 +3275,8 @@ var
     GapMils, MinWMils, MaxWMils, PrefWMils, MaxUncoupMils : Double;
     Board : IPCB_Board;
     Rule  : IPCB_Rule;
+    LS    : IPCB_LayerStack_V7;
+    Lo    : IPCB_LayerObject;
     ResultProps, OutputLines : TStringList;
 begin
     RuleName := '';
@@ -3347,14 +3349,30 @@ begin
     Rule.Name := RuleName;
     Rule.Scope1Expression := Scope1;
     Rule.Scope2Expression := 'All';
-    // GUESS: gap + width + uncoupled property names (NEEDS LIVE CONFIRMATION)
-    Rule.MinGap := MMsToCoord(GapMils * 0.0254);
-    Rule.MaxGap := MMsToCoord(GapMils * 0.0254);
-    Rule.PreferedGap := MMsToCoord(GapMils * 0.0254);
-    Rule.MinWidth := MMsToCoord(MinWMils * 0.0254);
-    Rule.MaxWidth := MMsToCoord(MaxWMils * 0.0254);
-    Rule.PreferedWidth := MMsToCoord(PrefWMils * 0.0254);
-    Rule.MaxUncoupledLength := MMsToCoord(MaxUncoupMils * 0.0254);
+    // Width constraints use MinWidth/MaxWidth/PreferedWidth - validated IPCB_Rule
+    // properties shared across routing rule kinds, so they compile and apply on a
+    // diff-pair routing rule. The diff-pair-specific Gap and Max-Uncoupled-Length
+    // properties are NOT exposed to the DelphiScript IPCB_Rule interface in this
+    // Altium build (hidden from autocomplete and absent from the install's example
+    // scripts); assigning a non-existent name throws a compiler modal, so they are
+    // intentionally left at Altium defaults here. Set Min/Max/Preferred Gap and
+    // Max Uncoupled Length in the PCB Rules dialog if non-default values are needed.
+    // Width limits are per-layer indexed properties (MinWidth[layer]); set them on
+    // every copper layer, exactly as the validated width-rule tool does.
+    LS := Board.LayerStack_V7;
+    if (LS <> nil) then
+    begin
+        Lo := LS.FirstLayer;
+        while (Lo <> nil) do
+        begin
+            Rule.MinWidth[Lo.LayerID]     := MMsToCoord(MinWMils * 0.0254);
+            Rule.MaxWidth[Lo.LayerID]     := MMsToCoord(MaxWMils * 0.0254);
+            // Preferred (Favored) width is not exposed on this rule kind's interface
+            // in this Altium build; min/max are the enforced DRC limits anyway.
+            if (Lo = LS.LastLayer) then Break;
+            Lo := LS.NextLayer(Lo);
+        end;
+    end;
     Rule.DRCEnabled := True;
     Board.AddPCBObject(Rule);
     PCBServer.SendMessageToRobots(Rule.I_ObjectAddress, c_Broadcast, PCBM_BoardRegisteration, c_NoEventData);
@@ -3367,6 +3385,7 @@ begin
         AddJSONProperty(ResultProps, 'rule_name', RuleName);
         AddJSONProperty(ResultProps, 'rule_kind', 'DifferentialPairsRouting');
         AddJSONProperty(ResultProps, 'scope1', Scope1);
+        AddJSONProperty(ResultProps, 'constraint_note', 'Rule created, typed and scoped with width constraints set. Gap and Max Uncoupled Length are not script-settable in this Altium build - set them in the PCB Rules dialog if non-default values are needed.');
         AddJSONNumber(ResultProps, 'gap_mils', GapMils);
         AddJSONNumber(ResultProps, 'min_width_mils', MinWMils);
         AddJSONNumber(ResultProps, 'max_width_mils', MaxWMils);
@@ -3455,9 +3474,11 @@ begin
     Rule.Name := RuleName;
     Rule.Scope1Expression := Scope1;
     Rule.Scope2Expression := 'All';
-    // GUESS: MinImpedance / MaxImpedance, ohms (NEEDS LIVE CONFIRMATION)
-    Rule.MinImpedance := MinOhms;
-    Rule.MaxImpedance := MaxOhms;
+    // The MaxMin Impedance rule's ohm constraints are not exposed to the
+    // DelphiScript IPCB_Rule interface in this Altium build (MinImpedance/
+    // MaxImpedance throw 'Undeclared identifier'), so they are left at Altium
+    // defaults. Rule is created correctly typed and scoped; set the impedance
+    // limits in the PCB Rules dialog if needed.
     Rule.DRCEnabled := True;
     Board.AddPCBObject(Rule);
     PCBServer.SendMessageToRobots(Rule.I_ObjectAddress, c_Broadcast, PCBM_BoardRegisteration, c_NoEventData);
@@ -3470,6 +3491,7 @@ begin
         AddJSONProperty(ResultProps, 'rule_name', RuleName);
         AddJSONProperty(ResultProps, 'rule_kind', 'Impedance');
         AddJSONProperty(ResultProps, 'scope1', Scope1);
+        AddJSONProperty(ResultProps, 'constraint_note', 'Rule created, typed and scoped. Impedance ohm limits are not script-settable in this Altium build - set them in the PCB Rules dialog.');
         AddJSONNumber(ResultProps, 'min_ohms', MinOhms);
         AddJSONNumber(ResultProps, 'max_ohms', MaxOhms);
         OutputLines := TStringList.Create;
@@ -3548,8 +3570,10 @@ begin
     Rule.Name := RuleName;
     Rule.Scope1Expression := Scope1;
     Rule.Scope2Expression := 'All';
-    // GUESS: MatchTolerance, length (mils -> coord) (NEEDS LIVE CONFIRMATION)
-    Rule.MatchTolerance := MMsToCoord(TolMils * 0.0254);
+    // The Matched Net Lengths rule's tolerance is not exposed to the DelphiScript
+    // IPCB_Rule interface in this Altium build (MatchTolerance throws 'Undeclared
+    // identifier'), so it is left at the Altium default. Rule is created correctly
+    // typed and scoped; set the tolerance in the PCB Rules dialog if needed.
     Rule.DRCEnabled := True;
     Board.AddPCBObject(Rule);
     PCBServer.SendMessageToRobots(Rule.I_ObjectAddress, c_Broadcast, PCBM_BoardRegisteration, c_NoEventData);
@@ -3562,6 +3586,7 @@ begin
         AddJSONProperty(ResultProps, 'rule_name', RuleName);
         AddJSONProperty(ResultProps, 'rule_kind', 'MatchedNetLengths');
         AddJSONProperty(ResultProps, 'scope1', Scope1);
+        AddJSONProperty(ResultProps, 'constraint_note', 'Rule created, typed and scoped. Match tolerance is not script-settable in this Altium build - set it in the PCB Rules dialog.');
         AddJSONNumber(ResultProps, 'tolerance_mils', TolMils);
         OutputLines := TStringList.Create;
         try
