@@ -3174,8 +3174,14 @@ var
     i           : Integer;
     netName     : String;
     cur         : Integer;
+    PolyIter    : IPCB_BoardIterator;
+    Poly        : IPCB_Primitive;
+    PouredNets  : TStringList;
+    isPoured    : Boolean;
+    signalCount : Integer;
 begin
     Result := '';
+    signalCount := 0;
 
     Board := PCBServer.GetCurrentPCBBoard;
     if (Board = nil) then
@@ -3185,7 +3191,23 @@ begin
     end;
 
     Counts := TStringList.Create;
+    PouredNets := TStringList.Create;
     try
+        // Collect nets that have a copper pour (polygon). A poured net (GND, power
+        // rails) is satisfied by the plane, so its ratsnest connections over-count
+        // "unrouted" - flag those nets so callers can exclude them.
+        PolyIter := Board.BoardIterator_Create;
+        PolyIter.AddFilter_ObjectSet(MkSet(ePolyObject));
+        PolyIter.AddFilter_LayerSet(AllLayers);
+        PolyIter.AddFilter_Method(eProcessAll);
+        Poly := PolyIter.FirstPCBObject;
+        while (Poly <> nil) do
+        begin
+            if (Poly.Net <> nil) then PouredNets.Values[Poly.Net.Name] := '1';
+            Poly := PolyIter.NextPCBObject;
+        end;
+        Board.BoardIterator_Destroy(PolyIter);
+
         // FLAG: eConnectionObject represents ratsnest connection lines. In Altium
         // a Connection primitive that is NOT routed contributes to the net's
         // ratsnest. Iterating eConnectionObject and counting per net is the
@@ -3218,10 +3240,13 @@ begin
                 cur := StrToIntDef(Counts.Values[netName], 0);
                 if (cur > 0) then
                 begin
+                    isPoured := (PouredNets.Values[netName] = '1');
+                    if (not isPoured) then signalCount := signalCount + 1;
                     Props := TStringList.Create;
                     try
                         AddJSONProperty(Props, 'net', netName);
                         AddJSONInteger(Props, 'unrouted_connections', cur);
+                        AddJSONBoolean(Props, 'has_pour', isPoured);
                         NetArray.Add(BuildJSONObject(Props, 1));
                     finally
                         Props.Free;
@@ -3232,6 +3257,7 @@ begin
             ResultProps := TStringList.Create;
             try
                 AddJSONInteger(ResultProps, 'total_unrouted_nets', NetArray.Count);
+                AddJSONInteger(ResultProps, 'total_unrouted_signal_nets', signalCount);
                 AddJSONBoolean(ResultProps, 'connectivity_api_unconfirmed', True);
                 ResultProps.Add(BuildJSONArray(NetArray, 'nets'));
                 OutputLines := TStringList.Create;
@@ -3249,7 +3275,55 @@ begin
         end;
     finally
         Counts.Free;
+        PouredNets.Free;
     end;
+end;
+
+// Read-only: list all object classes on the board (net classes, component classes,
+// etc.) with name + kind. Useful for confirming InNetClass(...)/InComponentClass(...)
+// scope names before scoping rules.
+function ExecuteGetNetClasses(RequestData: TStringList): String;
+var
+    Board   : IPCB_Board;
+    Iter    : IPCB_BoardIterator;
+    Cls     : IPCB_ObjectClass;
+    KindStr : String;
+    ClassArray, Props, ResultProps, OutputLines : TStringList;
+begin
+    Board := PCBServer.GetCurrentPCBBoard;
+    if (Board = nil) then begin Result := '{"success": false, "error": "No PCB document is currently active"}'; Exit; end;
+
+    ClassArray := TStringList.Create;
+    try
+        Iter := Board.BoardIterator_Create;
+        Iter.AddFilter_ObjectSet(MkSet(eClassObject));
+        Iter.AddFilter_LayerSet(AllLayers);
+        Iter.AddFilter_Method(eProcessAll);
+        Cls := Iter.FirstPCBObject;
+        while (Cls <> nil) do
+        begin
+            if (Cls.MemberKind = eClassMemberKind_Net) then KindStr := 'Net' else KindStr := 'Other';
+            Props := TStringList.Create;
+            try
+                AddJSONProperty(Props, 'name', Cls.Name);
+                AddJSONProperty(Props, 'kind', KindStr);
+                AddJSONBoolean(Props, 'super_class', Cls.SuperClass);
+                ClassArray.Add(BuildJSONObject(Props, 1));
+            finally
+                Props.Free;
+            end;
+            Cls := Iter.NextPCBObject;
+        end;
+        Board.BoardIterator_Destroy(Iter);
+
+        ResultProps := TStringList.Create;
+        try
+            AddJSONInteger(ResultProps, 'total_classes', ClassArray.Count);
+            ResultProps.Add(BuildJSONArray(ClassArray, 'classes'));
+            OutputLines := TStringList.Create;
+            try OutputLines.Text := BuildJSONObject(ResultProps); Result := OutputLines.Text; finally OutputLines.Free; end;
+        finally ResultProps.Free; end;
+    finally ClassArray.Free; end;
 end;
 
 // Read-only: connected pads as DESIGNATOR-PAD, grouped by net. If FilterNet is

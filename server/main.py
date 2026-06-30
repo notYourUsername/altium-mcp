@@ -1373,20 +1373,31 @@ async def get_routing_status(ctx: Context) -> str:
         all_names.add(n if isinstance(n, str) else n.get("net"))
     all_names.discard(None)
 
-    routed_raw = len_resp.get("result", {}).get("nets", [])
-    # A net with 0 routed length has no real copper -> treat as unrouted, not routed.
-    routed = [r for r in routed_raw if float(r.get("length_mils", 0)) > 0]
-    routed_names = set(r.get("net") for r in routed)
-    unrouted = sorted(n for n in all_names if n not in routed_names)
-    routed_sorted = sorted(routed, key=lambda r: float(r.get("length_mils", 0)), reverse=True)
+    # The ratsnest is the source of truth for "still needs routing" - copper length
+    # alone is misleading because a tiny pad stub gives a net length but it's not
+    # actually routed. Plane/poured nets (has_pour) are satisfied by the pour.
+    rats_resp = await altium_bridge.execute_command("get_unrouted_nets", {})
+    rats = rats_resp.get("result", {}).get("nets", []) if rats_resp.get("success", False) else []
+    unrouted_signal = sorted(
+        r.get("net") for r in rats
+        if int(r.get("unrouted_connections", 0)) > 0 and not r.get("has_pour", False))
+    plane_nets = sorted(set(r.get("net") for r in rats if r.get("has_pour", False)))
+
+    length_raw = len_resp.get("result", {}).get("nets", [])
+    nets_with_copper = sorted(
+        [r for r in length_raw if float(r.get("length_mils", 0)) > 0],
+        key=lambda r: float(r.get("length_mils", 0)), reverse=True)
 
     return json.dumps({
         "success": True,
         "total_nets": len(all_names),
-        "routed_count": len(routed_names),
-        "unrouted_count": len(unrouted),
-        "unrouted_nets": unrouted,
-        "routed_nets": routed_sorted,
+        "unrouted_signal_count": len(unrouted_signal),
+        "unrouted_signal_nets": unrouted_signal,
+        "plane_nets": plane_nets,
+        "nets_with_copper": nets_with_copper,
+        "note": ("unrouted_signal_nets is the real routing TODO (from ratsnest); "
+                 "plane_nets are satisfied by copper pours; nets_with_copper lists "
+                 "routed length per net (may include partially-routed nets) for length matching"),
     }, indent=2)
 
 
@@ -1479,6 +1490,23 @@ async def stitch_vias(ctx: Context, x1: float, y1: float, x2: float, y2: float,
         placed.append({"x": round(vx, 2), "y": round(vy, 2), "ok": bool(r.get("success", False))})
     return json.dumps({"success": True, "net": net, "count": len(placed),
                        "pitch_mils": pitch_mils, "vias": placed}, indent=2)
+
+
+@mcp.tool()
+async def get_net_classes(ctx: Context) -> str:
+    """
+    List the object classes defined on the board (net classes, component classes,
+    etc.) with their name and kind. Use to confirm the class names used in scope
+    expressions like InNetClass('USB') or InComponentClass(...) before scoping rules.
+
+    Returns:
+        str: JSON with total_classes and a classes array (name, kind, super_class).
+             kind is "Net" for net classes, "Other" for component/other classes.
+    """
+    resp = await altium_bridge.execute_command("get_net_classes", {})
+    if not resp.get("success", False):
+        return json.dumps({"success": False, "error": resp.get("error", "get_net_classes failed")})
+    return json.dumps(resp.get("result", {}), indent=2)
 
 
 @mcp.tool()

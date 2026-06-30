@@ -793,6 +793,8 @@ begin
             Result := ExecuteAddTrack(RequestData);
         'delete_via_near':
             Result := ExecuteDeleteViaNear(RequestData);
+        'get_net_classes':
+            Result := ExecuteGetNetClasses(RequestData);
         'apply_fab_profile':
             Result := ExecuteApplyFabProfile(RequestData);
         'fab_measure':
