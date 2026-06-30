@@ -23,6 +23,7 @@ import re
 from bom import build_bom
 from activity import append_activity
 from fab import load_profile, find_profile, evaluate_dfm
+from impedance import solve_width_for_impedance, microstrip_z0, stripline_z0
 
 # Configure logging
 logging.basicConfig(
@@ -1936,6 +1937,215 @@ async def get_pcb_layer_stackup(ctx: Context) -> str:
     
     logger.info(f"Retrieved PCB layer stackup data")
     return json.dumps(stackup_data, indent=2)
+
+
+@mcp.tool()
+async def suggest_trace_width(ctx: Context, target_ohms: float,
+                              dielectric_height_mm: float, dk: float,
+                              copper_thickness_mm: float = 0.035,
+                              mode: str = "microstrip") -> str:
+    """
+    Estimate the PCB trace width needed for a target single-ended characteristic
+    impedance. PURE COMPUTE - does not touch Altium.
+
+    Uses closed-form analytic models (Hammerstad-Jensen microstrip / IPC-2141A
+    stripline) and a bisection solver. The result is an ESTIMATE, typically within
+    ~+/-5-10% of a 2D field solver. ALWAYS confirm the width against a field solver
+    (e.g. Polar SI9000, Saturn PCB) or your fab's controlled-impedance calculator
+    before committing a controlled-impedance design.
+
+    Args:
+        target_ohms: Desired characteristic impedance (ohms), e.g. 50.
+        dielectric_height_mm: Dielectric height (mm). For microstrip this is the
+            trace-to-plane substrate height; for stripline it is the TOTAL
+            plane-to-plane spacing (trace assumed centred).
+        dk: Dielectric constant (relative permittivity / Dk) of the substrate.
+        copper_thickness_mm: Finished copper thickness (mm). Default 0.035 (~1 oz).
+        mode: "microstrip" (surface) or "stripline" (buried). Default "microstrip".
+
+    Returns:
+        str: JSON with the estimated width (mm + mil), a Z0 back-check at that width,
+             the inputs used, and an ESTIMATE/confirm-with-field-solver caveat.
+    """
+    logger.info(f"suggest_trace_width target={target_ohms} mode={mode}")
+    try:
+        res = solve_width_for_impedance(
+            target_ohms=float(target_ohms),
+            h_mm=float(dielectric_height_mm),
+            er=float(dk),
+            t_mm=float(copper_thickness_mm),
+            mode=mode,
+        )
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
+
+    out = {
+        "mode": mode,
+        "inputs": {
+            "target_ohms": target_ohms,
+            "dielectric_height_mm": dielectric_height_mm,
+            "dk": dk,
+            "copper_thickness_mm": copper_thickness_mm,
+        },
+        "width_mm": res["width_mm"],
+        "width_mil": res["width_mil"],
+        "z0_check_ohms": res["z0_check_ohms"],
+        "converged": res["converged"],
+        "estimate_only": True,
+        "note": res["note"],
+    }
+    return json.dumps(out, indent=2)
+
+
+def _parse_signal_layer_geometry(stackup: dict, signal_layer: str, mode: str) -> dict:
+    """
+    Pull the Dk and dielectric height for a named signal layer out of the
+    get_pcb_layer_stackup JSON. Parses defensively.
+
+    The DelphiScript GetPCBLayerStackup emits per copper layer (exact field names):
+        layer_name, layer_id, material_type, copper_thickness_mils,
+        copper_thickness_um, dielectric_type, dielectric_material,
+        dielectric_height_mils, dielectric_height_um, dielectric_constant,
+        layer_order
+    Note: heights/thicknesses are reported in mils and um (NOT mm), so we convert.
+
+    For microstrip we use the dielectric directly below the named copper layer.
+    For stripline we sum the dielectric directly above and below the named layer
+    (its total plane-to-plane substrate) and use the layer's own Dk.
+    """
+    layers = stackup.get("layers")
+    if not isinstance(layers, list) or not layers:
+        raise ValueError("stackup JSON has no 'layers' array")
+
+    want = str(signal_layer).strip().lower()
+    idx = None
+    for i, ly in enumerate(layers):
+        if not isinstance(ly, dict):
+            continue
+        if str(ly.get("layer_name", "")).strip().lower() == want:
+            idx = i
+            break
+    if idx is None:
+        names = [ly.get("layer_name") for ly in layers if isinstance(ly, dict)]
+        raise ValueError(f"signal layer {signal_layer!r} not found. Layers: {names}")
+
+    def _um_to_mm(v):
+        try:
+            return float(v) / 1000.0
+        except (TypeError, ValueError):
+            return None
+
+    def _diel_below(i):
+        ly = layers[i]
+        h = _um_to_mm(ly.get("dielectric_height_um"))
+        if h is None or h <= 0:
+            # fall back to mils field if um missing
+            try:
+                mils = float(ly.get("dielectric_height_mils"))
+                h = mils * 0.0254 if mils > 0 else None
+            except (TypeError, ValueError):
+                h = None
+        dk = ly.get("dielectric_constant")
+        try:
+            dk = float(dk)
+        except (TypeError, ValueError):
+            dk = None
+        return h, dk
+
+    sig = layers[idx]
+
+    if mode.strip().lower() == "microstrip":
+        h, dk = _diel_below(idx)
+        if not h or not dk:
+            raise ValueError(
+                f"Layer {signal_layer!r} has no usable dielectric below it "
+                f"(height_mm={h}, dk={dk}). For a top/bottom microstrip the signal "
+                f"layer must sit on a dielectric above a reference plane.")
+        return {"h_mm": h, "dk": dk}
+
+    # stripline: dielectric above (the layer above this one's 'below' gap) + below
+    h_below, dk_below = _diel_below(idx)
+    h_above, dk_above = (None, None)
+    if idx > 0:
+        h_above, dk_above = _diel_below(idx - 1)
+    parts = [v for v in (h_above, h_below) if v]
+    if not parts:
+        raise ValueError(
+            f"Layer {signal_layer!r}: could not find dielectric on either side for a "
+            f"stripline. Heights above={h_above}, below={h_below}.")
+    h_total = sum(parts)
+    # Prefer the signal layer's own Dk, else whatever side reported one.
+    dk = dk_below or dk_above
+    if not dk:
+        raise ValueError(f"Layer {signal_layer!r}: no dielectric_constant available.")
+    return {"h_mm": h_total, "dk": dk}
+
+
+@mcp.tool()
+async def estimate_impedance_width_from_stackup(ctx: Context, target_ohms: float,
+                                                signal_layer: str,
+                                                mode: str = "microstrip") -> str:
+    """
+    Estimate the trace width for a target impedance using the ACTUAL board stack-up.
+
+    Reads the current PCB layer stack-up from Altium (get_pcb_layer_stackup), pulls
+    the dielectric height and Dk associated with the named signal layer, then solves
+    for the width. The result is an ESTIMATE (analytic model, ~+/-5-10% vs a 2D field
+    solver) - confirm it against a field solver or your fab's controlled-impedance
+    calculator before use.
+
+    Args:
+        target_ohms: Desired characteristic impedance (ohms), e.g. 50.
+        signal_layer: Copper layer name as it appears in the stack-up (e.g. "Top Layer").
+        mode: "microstrip" (signal on a dielectric above one plane) or "stripline"
+            (signal buried between two planes). Default "microstrip".
+
+    Returns:
+        str: JSON with the estimated width (mm + mil), the Dk/height taken from the
+             stack-up, a Z0 back-check, and an ESTIMATE/confirm caveat.
+    """
+    logger.info(f"estimate_impedance_width_from_stackup layer={signal_layer} "
+                f"target={target_ohms} mode={mode}")
+
+    response = await altium_bridge.execute_command("get_pcb_layer_stackup", {})
+    if not response.get("success", False):
+        error_msg = response.get("error", "Unknown error")
+        return json.dumps({"error": f"Failed to get PCB layer stackup: {error_msg}"})
+
+    stackup = response.get("result", {})
+    if not isinstance(stackup, dict) or "error" in stackup:
+        return json.dumps({"error": f"No usable stackup returned: {stackup}"})
+
+    try:
+        geo = _parse_signal_layer_geometry(stackup, signal_layer, mode)
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
+
+    try:
+        res = solve_width_for_impedance(
+            target_ohms=float(target_ohms),
+            h_mm=geo["h_mm"], er=geo["dk"], t_mm=0.035, mode=mode,
+        )
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
+
+    out = {
+        "mode": mode,
+        "signal_layer": signal_layer,
+        "from_stackup": {
+            "dielectric_height_mm": round(geo["h_mm"], 5),
+            "dk": geo["dk"],
+            "copper_thickness_mm_assumed": 0.035,
+        },
+        "width_mm": res["width_mm"],
+        "width_mil": res["width_mil"],
+        "z0_check_ohms": res["z0_check_ohms"],
+        "converged": res["converged"],
+        "estimate_only": True,
+        "note": res["note"],
+    }
+    return json.dumps(out, indent=2)
+
 
 @mcp.tool()
 async def get_output_job_containers(ctx: Context) -> str:
