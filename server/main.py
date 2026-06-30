@@ -1492,7 +1492,53 @@ async def stitch_vias(ctx: Context, x1: float, y1: float, x2: float, y2: float,
                        "pitch_mils": pitch_mils, "vias": placed}, indent=2)
 
 
-SERVER_VERSION = "2026-06-30-b5"
+SERVER_VERSION = "2026-06-30-b6"
+
+
+@mcp.tool()
+async def get_diff_pair_skew(ctx: Context, tolerance_mils: float = 5) -> str:
+    """
+    Report intra-pair length skew for differential pairs, inferred from net naming
+    (X_D_P/X_D_N, X_P/X_N, X+/X-). For each pair, gives both routed lengths and the
+    skew (|len_P - len_N|), flagging pairs over tolerance. Pure read over
+    get_nets_with_length - good for length-match review of USB/CAN/etc. diff pairs.
+
+    Args:
+        tolerance_mils: Max allowed intra-pair length difference before flagging.
+    """
+    resp = await altium_bridge.execute_command("get_nets_with_length", {})
+    if not resp.get("success", False):
+        return json.dumps({"success": False, "error": resp.get("error", "get_nets_with_length failed")})
+    nets = {n.get("net"): float(n.get("length_mils", 0))
+            for n in resp.get("result", {}).get("nets", []) if n.get("net")}
+
+    def partner(name):
+        for pos, neg in (("_D_P", "_D_N"), ("_P", "_N"), ("+", "-")):
+            if name.endswith(pos):
+                return name[:len(name) - len(pos)] + neg
+        return None
+
+    pairs, seen = [], set()
+    for name in nets:
+        pn = partner(name)
+        if pn and pn in nets and name not in seen and pn not in seen:
+            lp, ln = nets[name], nets[pn]
+            skew = abs(lp - ln)
+            pairs.append({"positive": name, "negative": pn,
+                          "len_p_mils": round(lp, 3), "len_n_mils": round(ln, 3),
+                          "skew_mils": round(skew, 3), "within_tol": skew <= tolerance_mils})
+            seen.add(name)
+            seen.add(pn)
+    pairs.sort(key=lambda p: p["skew_mils"], reverse=True)
+    over = [p for p in pairs if not p["within_tol"]]
+    return json.dumps({
+        "success": True,
+        "tolerance_mils": tolerance_mils,
+        "pairs_found": len(pairs),
+        "over_tolerance": len(over),
+        "note": "pairs inferred from net naming; lengths are routed copper (unrouted nets read ~0)",
+        "pairs": pairs,
+    }, indent=2)
 
 
 @mcp.tool()
