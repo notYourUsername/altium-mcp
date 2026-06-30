@@ -1172,6 +1172,222 @@ async def move_components(ctx: Context, cmp_designators: list, x_offset: float, 
     logger.info(f"Components moved successfully")
     return json.dumps({"success": True, "result": result}, indent=2)
 
+
+async def _fetch_component_xy(designators: list) -> dict:
+    """Helper: return {designator: {"x": mils, "y": mils, "rotation": deg}} for the given parts."""
+    resp = await altium_bridge.execute_command(
+        "get_component_data", {"cmp_designators": designators})
+    if not resp.get("success", False):
+        return {"_error": resp.get("error", "get_component_data failed")}
+    comps = resp.get("result", {}).get("components", [])
+    out = {}
+    for c in comps:
+        out[c["designator"]] = {
+            "x": float(c.get("x", 0)),
+            "y": float(c.get("y", 0)),
+            "rotation": float(c.get("rotation", 0)),
+        }
+    return out
+
+
+@mcp.tool()
+async def align_components(ctx: Context, cmp_designators: list, axis: str, mode: str = "avg") -> str:
+    """
+    Align a set of components to a common axis line, by moving each to a shared
+    X (for a vertical line) or Y (for a horizontal line). Pure orchestration over
+    get_component_data + set_component_position - positions are mils.
+
+    Args:
+        cmp_designators: Components to align, e.g. ["C2","C3","C4"].
+        axis: "x" -> give them all the same X (aligns them into a vertical column);
+              "y" -> give them all the same Y (aligns them into a horizontal row).
+        mode: Which line to align to: "avg" (mean, default), "min", "max", or
+              "first" (use the first listed component's coordinate).
+
+    Returns:
+        str: JSON with the target line and each component's old -> new position.
+    """
+    axis = (axis or "").lower().strip()
+    if axis not in ("x", "y"):
+        return json.dumps({"success": False, "error": "axis must be 'x' or 'y'"})
+    if not cmp_designators:
+        return json.dumps({"success": False, "error": "cmp_designators is empty"})
+    pos = await _fetch_component_xy(cmp_designators)
+    if "_error" in pos:
+        return json.dumps({"success": False, "error": pos["_error"]})
+    missing = [d for d in cmp_designators if d not in pos]
+    if missing:
+        return json.dumps({"success": False, "error": f"Components not found: {missing}"})
+
+    coords = [pos[d][axis] for d in cmp_designators]
+    if mode == "min":
+        target = min(coords)
+    elif mode == "max":
+        target = max(coords)
+    elif mode == "first":
+        target = pos[cmp_designators[0]][axis]
+    else:
+        target = sum(coords) / len(coords)
+
+    moves = []
+    for d in cmp_designators:
+        new_x = target if axis == "x" else pos[d]["x"]
+        new_y = target if axis == "y" else pos[d]["y"]
+        r = await altium_bridge.execute_command(
+            "set_component_position",
+            {"designator": d, "x": new_x, "y": new_y, "rotation": -1})
+        moves.append({"designator": d, "from": [pos[d]["x"], pos[d]["y"]],
+                      "to": [new_x, new_y], "ok": bool(r.get("success", False))})
+    return json.dumps({"success": True, "axis": axis, "mode": mode,
+                       "target_mils": target, "moves": moves}, indent=2)
+
+
+@mcp.tool()
+async def distribute_components(ctx: Context, cmp_designators: list, axis: str, spacing: float = 0) -> str:
+    """
+    Evenly space components along an axis, in their current order along that axis.
+    Useful for cleaning up a row of decoupling caps or connector pins.
+
+    Args:
+        cmp_designators: Components to distribute.
+        axis: "x" spaces them horizontally; "y" spaces them vertically.
+        spacing: Center-to-center spacing in mils. If 0 (default), spreads them
+                 evenly between the current lowest and highest component, keeping
+                 the two end components fixed.
+
+    Returns:
+        str: JSON with the spacing used and each component's old -> new position.
+    """
+    axis = (axis or "").lower().strip()
+    if axis not in ("x", "y"):
+        return json.dumps({"success": False, "error": "axis must be 'x' or 'y'"})
+    if len(cmp_designators) < 2:
+        return json.dumps({"success": False, "error": "need at least 2 components"})
+    pos = await _fetch_component_xy(cmp_designators)
+    if "_error" in pos:
+        return json.dumps({"success": False, "error": pos["_error"]})
+    missing = [d for d in cmp_designators if d not in pos]
+    if missing:
+        return json.dumps({"success": False, "error": f"Components not found: {missing}"})
+
+    ordered = sorted(cmp_designators, key=lambda d: pos[d][axis])
+    start = pos[ordered[0]][axis]
+    end = pos[ordered[-1]][axis]
+    step = spacing if (spacing and spacing > 0) else (end - start) / (len(ordered) - 1)
+
+    moves = []
+    for idx, d in enumerate(ordered):
+        tgt = start + step * idx
+        new_x = tgt if axis == "x" else pos[d]["x"]
+        new_y = tgt if axis == "y" else pos[d]["y"]
+        r = await altium_bridge.execute_command(
+            "set_component_position",
+            {"designator": d, "x": new_x, "y": new_y, "rotation": -1})
+        moves.append({"designator": d, "from": [pos[d]["x"], pos[d]["y"]],
+                      "to": [new_x, new_y], "ok": bool(r.get("success", False))})
+    return json.dumps({"success": True, "axis": axis, "spacing_mils": step,
+                       "order": ordered, "moves": moves}, indent=2)
+
+
+@mcp.tool()
+async def place_relative(ctx: Context, cmp_designator: str, anchor_designator: str,
+                         dx: float = 0, dy: float = 0, anchor_pad: str = "",
+                         rotation: float = -1) -> str:
+    """
+    Place a component at an offset from an anchor component (or one of its pads).
+    Ideal for tucking a decoupling capacitor right next to an IC power pin.
+
+    Args:
+        cmp_designator: Component to move, e.g. "C18".
+        anchor_designator: Reference component, e.g. "U7".
+        dx: X offset in mils from the anchor point (positive = right).
+        dy: Y offset in mils from the anchor point (positive = up).
+        anchor_pad: Optional pad name on the anchor (e.g. "14"); the offset is then
+                    measured from that pad's center. If omitted, the anchor's body
+                    origin is used.
+        rotation: Absolute rotation in degrees for the moved component (-1 keeps current).
+
+    Returns:
+        str: JSON with the anchor point used and the resulting placement.
+    """
+    if anchor_pad:
+        resp = await altium_bridge.execute_command(
+            "get_component_pins", {"cmp_designators": [anchor_designator]})
+        if not resp.get("success", False):
+            return json.dumps({"success": False, "error": resp.get("error", "get_component_pins failed")})
+        data = resp.get("result", [])
+        # result is a list of {designator, pins:[{name,x,y,...}]}
+        ax = ay = None
+        for entry in (data if isinstance(data, list) else []):
+            if entry.get("designator") == anchor_designator:
+                for p in entry.get("pins", []):
+                    if str(p.get("name")) == str(anchor_pad):
+                        ax, ay = float(p.get("x", 0)), float(p.get("y", 0))
+                        break
+        if ax is None:
+            return json.dumps({"success": False,
+                               "error": f"Pad {anchor_pad} not found on {anchor_designator}"})
+    else:
+        pos = await _fetch_component_xy([anchor_designator])
+        if "_error" in pos or anchor_designator not in pos:
+            return json.dumps({"success": False, "error": f"Anchor {anchor_designator} not found"})
+        ax, ay = pos[anchor_designator]["x"], pos[anchor_designator]["y"]
+
+    new_x, new_y = ax + dx, ay + dy
+    r = await altium_bridge.execute_command(
+        "set_component_position",
+        {"designator": cmp_designator, "x": new_x, "y": new_y, "rotation": rotation})
+    if not r.get("success", False):
+        return json.dumps({"success": False, "error": r.get("error", "set_component_position failed")})
+    return json.dumps({"success": True, "moved": cmp_designator,
+                       "anchor": anchor_designator, "anchor_pad": anchor_pad or None,
+                       "anchor_point_mils": [ax, ay], "placed_at_mils": [new_x, new_y],
+                       "result": r.get("result", {})}, indent=2)
+
+
+@mcp.tool()
+async def get_routing_status(ctx: Context) -> str:
+    """
+    Report routing completion: which nets are routed vs unrouted, plus the routed
+    copper length of each. Cross-references get_all_nets (every net) against
+    get_nets_with_length (nets that actually have copper), so an unrouted net shows
+    up cleanly - without the plane-net miscount of the raw ratsnest reader. The
+    routed list is sorted longest-first, which is handy for eyeballing length matching.
+
+    Returns:
+        str: JSON with total_nets, routed_count, unrouted_count, the unrouted net
+             names, and the routed nets (net, length_mils, length_mm) longest-first.
+    """
+    all_resp = await altium_bridge.execute_command("get_all_nets", {})
+    if not all_resp.get("success", False):
+        return json.dumps({"success": False, "error": all_resp.get("error", "get_all_nets failed")})
+    len_resp = await altium_bridge.execute_command("get_nets_with_length", {})
+    if not len_resp.get("success", False):
+        return json.dumps({"success": False, "error": len_resp.get("error", "get_nets_with_length failed")})
+
+    all_raw = all_resp.get("result", [])
+    if isinstance(all_raw, dict):
+        all_raw = all_raw.get("nets", [])
+    all_names = set()
+    for n in all_raw:
+        all_names.add(n if isinstance(n, str) else n.get("net"))
+    all_names.discard(None)
+
+    routed = len_resp.get("result", {}).get("nets", [])
+    routed_names = set(r.get("net") for r in routed)
+    unrouted = sorted(n for n in all_names if n not in routed_names)
+    routed_sorted = sorted(routed, key=lambda r: float(r.get("length_mils", 0)), reverse=True)
+
+    return json.dumps({
+        "success": True,
+        "total_nets": len(all_names),
+        "routed_count": len(routed_names),
+        "unrouted_count": len(unrouted),
+        "unrouted_nets": unrouted,
+        "routed_nets": routed_sorted,
+    }, indent=2)
+
+
 @mcp.tool()
 async def get_schematic_nets(ctx: Context) -> str:
     """
