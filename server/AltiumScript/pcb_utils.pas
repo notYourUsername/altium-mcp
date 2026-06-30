@@ -1673,7 +1673,8 @@ begin
             // Create rule properties
             RuleProps := TStringList.Create;
             try
-                // Add rule descriptor
+                // Add rule name + descriptor
+                AddJSONProperty(RuleProps, 'rule_name', Rule.Name);
                 AddJSONProperty(RuleProps, 'descriptor', Rule.Descriptor);
                 AddJSONProperty(RuleProps, 'rule_kind', Rule.GetState_ShortDescriptorString);
                 AddJSONProperty(RuleProps, 'filter1', Rule.Scope1Expression);

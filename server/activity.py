@@ -46,6 +46,24 @@ def is_write_command(command: str) -> bool:
     return True
 
 
+def _operation_succeeded(response: Any) -> bool:
+    """Did the *operation* succeed?
+
+    The bridge wraps every script result as {"success": <script ran>, "result": <output>}.
+    Top-level success only means the script executed; the operation's own success/error
+    lives in result. So a soft failure (e.g. "Rule not found") arrives as
+    {"success": true, "result": {"success": false, "error": "..."}}. Report ERR for those.
+    """
+    if not isinstance(response, dict):
+        return False
+    if not response.get("success", False):
+        return False
+    result = response.get("result")
+    if isinstance(result, dict) and "success" in result:
+        return bool(result.get("success", False))
+    return True
+
+
 def _summary(response: Any) -> str:
     if not isinstance(response, dict):
         return ""
@@ -67,8 +85,7 @@ def format_activity_line(
     if not is_write_command(command):
         return None
     ts = now or time.strftime("%Y-%m-%d %H:%M:%S")
-    ok = isinstance(response, dict) and bool(response.get("success", False))
-    status = "OK " if ok else "ERR"
+    status = "OK " if _operation_succeeded(response) else "ERR"
     try:
         pstr = json.dumps(params or {}, ensure_ascii=False, sort_keys=True)
     except Exception:

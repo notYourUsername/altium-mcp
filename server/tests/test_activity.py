@@ -78,6 +78,21 @@ def test_error_line_marked_err():
     assert "ERR" in line and "boom" in line
 
 
+def test_wrapped_soft_failure_is_err():
+    # Bridge wraps script output; transport success is True but the operation failed.
+    wrapped = {"success": True, "result": {"success": False, "error": "Rule not found"}}
+    line = format_activity_line("delete_design_rule", {"rule_name": "X"}, wrapped, now="t")
+    assert line.startswith("[t] ERR delete_design_rule")
+    assert "Rule not found" in line
+
+
+def test_wrapped_success_is_ok():
+    wrapped = {"success": True, "result": {"success": True, "rule_name": "X",
+                                           "deleted_rule_kind": "Clearance Constraint"}}
+    line = format_activity_line("delete_design_rule", {"rule_name": "X"}, wrapped, now="t")
+    assert line.startswith("[t] OK  delete_design_rule")
+
+
 # --- append behaviour -------------------------------------------------------
 
 def test_append_only_writes_for_write_commands(tmp_path):
