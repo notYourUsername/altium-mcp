@@ -980,7 +980,7 @@ var
     i, j, nHoles, cx, cy, rad : Integer;
     edgeDist, gap, mH2H, mEdge : Double;
     capped : Boolean;
-    BR : TCoordRect;
+    OutlineRect : TCoordRect;
     bL, bR, bB, bT : Integer;
     haveOutline : Boolean;
 begin
@@ -1011,8 +1011,8 @@ begin
     bL := 0; bR := 0; bB := 0; bT := 0;
     if (Board.BoardOutline <> nil) then
     begin
-        BR := Board.BoardOutline.BoundingRectangle;
-        bL := BR.Left; bR := BR.Right; bB := BR.Bottom; bT := BR.Top;
+        OutlineRect := Board.BoardOutline.BoundingRectangle;
+        bL := OutlineRect.Left; bR := OutlineRect.Right; bB := OutlineRect.Bottom; bT := OutlineRect.Top;
         haveOutline := True;
     end;
 
