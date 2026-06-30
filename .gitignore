@@ -20,4 +20,5 @@ wheels/
 # ...but DO track JSON that is part of the project (not runtime exchange files)
 !schemas/*.json
 !fab_profiles/*.json
+!server/fab_profiles/*.json
 !server/tests/fixtures/*.json

@@ -1,0 +1,50 @@
+{
+  "fab": "OSH Park",
+  "verified": false,
+  "source": "https://docs.oshpark.com/services/two-layer/ ; https://docs.oshpark.com/services/four-layer/",
+  "retrieved": "2026-06-29",
+  "notes": "UNVERIFIED. OSH Park runs two distinct services with different rules. 2-layer (1oz, 1.6mm): trace/space 6 mil (0.1524mm), annular ring 5 mil (0.127mm), min via outer = drill + 2*ring = 0.508mm. 4-layer (FR408HR, 1.6mm): trace/space 5 mil (0.127mm), annular ring 4 mil (0.1016mm), min via outer = 0.254 + 2*0.1016 = 0.4572mm. Both services: min drill 10 mil (0.254mm), hole-to-hole 5 mil (0.127mm) recommended clearance between overlapping drills (edge-to-edge), board edge keepout 15 mil (0.381mm), silkscreen min line 5 mil. The rules block below uses the TIGHTEST capability across both services (4-layer trace/space + annular, smallest min via) so the profile never falsely passes a board that violates the stricter service; check_against_fab a 2-layer design against the 2-layer service values in notes. min_via_diameter 0.4572mm (4-layer). Set verified=true only after a side-by-side with the live docs.",
+  "stackups": [
+    {
+      "name": "2L Purple 1.6mm",
+      "layer_count": 2,
+      "finished_thickness_mm": 1.6,
+      "impedance_controlled": false,
+      "layers": [
+        { "kind": "SolderMask", "material": "Taiyo PSR-4000BN", "thickness_mm": 0.0152 },
+        { "kind": "Copper", "copper_weight_oz": 1.0, "thickness_mm": 0.0356 },
+        { "kind": "Core", "material": "Kingboard KB6167F 175Tg FR-4", "thickness_mm": 1.524, "dielectric_constant": 4.5 },
+        { "kind": "Copper", "copper_weight_oz": 1.0, "thickness_mm": 0.0356 },
+        { "kind": "SolderMask", "material": "Taiyo PSR-4000BN", "thickness_mm": 0.0152 }
+      ]
+    },
+    {
+      "name": "4L FR408HR 1.6mm",
+      "layer_count": 4,
+      "finished_thickness_mm": 1.6,
+      "impedance_controlled": true,
+      "layers": [
+        { "kind": "SolderMask", "material": "Taiyo PSR-4000BN", "thickness_mm": 0.0152 },
+        { "kind": "Copper", "copper_weight_oz": 1.0, "thickness_mm": 0.0432 },
+        { "kind": "PrePreg", "material": "FR408HR 2113", "thickness_mm": 0.1999, "dielectric_constant": 3.61 },
+        { "kind": "Copper", "copper_weight_oz": 0.5, "thickness_mm": 0.0175 },
+        { "kind": "Core", "material": "FR408HR", "thickness_mm": 0.9906, "dielectric_constant": 3.61 },
+        { "kind": "Copper", "copper_weight_oz": 0.5, "thickness_mm": 0.0175 },
+        { "kind": "PrePreg", "material": "FR408HR 2113", "thickness_mm": 0.1999, "dielectric_constant": 3.61 },
+        { "kind": "Copper", "copper_weight_oz": 1.0, "thickness_mm": 0.0432 },
+        { "kind": "SolderMask", "material": "Taiyo PSR-4000BN", "thickness_mm": 0.0152 }
+      ]
+    }
+  ],
+  "rules": {
+    "min_trace_mm": 0.127,
+    "min_space_mm": 0.127,
+    "min_via_diameter_mm": 0.4572,
+    "min_via_drill_mm": 0.254,
+    "min_annular_ring_mm": 0.1016,
+    "min_hole_to_hole_mm": 0.127,
+    "copper_to_edge_mm": 0.381,
+    "min_silk_width_mm": 0.127,
+    "soldermask_expansion_mm": 0.0508
+  }
+}

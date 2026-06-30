@@ -912,9 +912,53 @@ begin
     if (v > 0) and ((m < 0) or (v < m)) then m := v;
 end;
 
+// Helper: keep the smallest non-negative Double seen (m < 0 = unset). Top-level.
+procedure TakeMinD(var m: Double; v: Double);
+begin
+    if (v >= 0) and ((m < 0) or (v < m)) then m := v;
+end;
+
+// Helper: Euclidean distance (internal coords) between two points, as Double. Top-level.
+function CoordDist(x1: Integer; y1: Integer; x2: Integer; y2: Integer): Double;
+var
+    dx, dy : Double;
+begin
+    dx := x2 - x1;
+    dy := y2 - y1;
+    Result := Sqrt(dx * dx + dy * dy);
+end;
+
+// Helper: shortest distance (internal coords) from point (px,py) to the axis-aligned
+// board bounding box [L,R]x[B,T]. For points inside the box (the normal case for copper)
+// this is the distance to the nearest of the four edges; for points outside it returns 0.
+// NOTE: this approximates the board edge by its bounding rectangle. For a rectangular
+// outline it is exact; for a non-rectangular outline it OVER-estimates clearance near
+// concave/cut regions. See the FLAG comment in ExecuteFabMeasure. Top-level.
+function DistPointToBoxEdge(px: Integer; py: Integer; L: Integer; R: Integer; B: Integer; T: Integer): Double;
+var
+    dL, dR, dB, dT, m : Double;
+begin
+    if (px < L) or (px > R) or (py < B) or (py > T) then
+    begin
+        Result := 0;
+        Exit;
+    end;
+    dL := px - L;
+    dR := R - px;
+    dB := py - B;
+    dT := T - py;
+    m := dL;
+    if (dR < m) then m := dR;
+    if (dB < m) then m := dB;
+    if (dT < m) then m := dT;
+    Result := m;
+end;
+
 // Read-only: measure the board for DFM. Returns smallest observed geometry + current
 // rule floors (all in mm). Python (fab.py) compares these against the fab profile.
 function ExecuteFabMeasure(RequestData: TStringList): String;
+const
+    MAX_HOLES = 4000; // O(n^2) guard: 4000 holes -> ~8M pair tests, still fast.
 var
     Board : IPCB_Board;
     Iter  : IPCB_BoardIterator;
@@ -930,6 +974,15 @@ var
     rW, rClr, rViaHole, rViaPad, rH2H : Integer;
     nTrack, nVia, nPad : Integer;
     ResultProps, OutputLines : TStringList;
+    // Hole-to-hole: collect every hole's center (X,Y) and radius as integer internal
+    // coords in parallel TStringLists (no dynamic arrays). Then O(n^2) nearest-neighbour.
+    HoleX, HoleY, HoleR : TStringList;
+    i, j, nHoles, cx, cy, rad : Integer;
+    edgeDist, gap, mH2H, mEdge : Double;
+    capped : Boolean;
+    BR : TCoordRect;
+    bL, bR, bB, bT : Integer;
+    haveOutline : Boolean;
 begin
     Board := PCBServer.GetCurrentPCBBoard;
     if (Board = nil) then
@@ -941,7 +994,27 @@ begin
     mTrack := -1; mViaHole := -1; mViaPad := -1; mViaAnn := -1; mPadHole := -1; mPadAnn := -1;
     rW := -1; rClr := -1; rViaHole := -1; rViaPad := -1; rH2H := -1;
     nTrack := 0; nVia := 0; nPad := 0;
+    mH2H := -1; mEdge := -1; capped := False;
     LS := Board.LayerStack_V7;
+
+    HoleX := TStringList.Create;
+    HoleY := TStringList.Create;
+    HoleR := TStringList.Create;
+
+    // Board outline bounding box (used to approximate copper-to-edge clearance).
+    // FLAG: Board.BoardOutline.BoundingRectangle is the only outline geometry read here.
+    // It is exact for rectangular boards but over-estimates clearance for non-rectangular
+    // outlines (cutouts, rounded/irregular edges). A precise measure would walk the
+    // outline contour segments; that API (IPCB_BoardOutline point/segment accessors) is
+    // not confirmed offline, so we use the bounding box and flag the result.
+    haveOutline := False;
+    bL := 0; bR := 0; bB := 0; bT := 0;
+    if (Board.BoardOutline <> nil) then
+    begin
+        BR := Board.BoardOutline.BoundingRectangle;
+        bL := BR.Left; bR := BR.Right; bB := BR.Bottom; bT := BR.Top;
+        haveOutline := True;
+    end;
 
     // Tracks (routed copper only -> have a net)
     Iter := Board.BoardIterator_Create;
@@ -955,6 +1028,17 @@ begin
         begin
             TakeMin(mTrack, Track.Width);
             nTrack := nTrack + 1;
+            // Copper-to-edge: distance from each track endpoint (minus half the track
+            // width to reach the copper edge) to the board outline box.
+            if (haveOutline) then
+            begin
+                edgeDist := DistPointToBoxEdge(Track.x1, Track.y1, bL, bR, bB, bT) - (Track.Width div 2);
+                if (edgeDist < 0) then edgeDist := 0;
+                TakeMinD(mEdge, edgeDist);
+                edgeDist := DistPointToBoxEdge(Track.x2, Track.y2, bL, bR, bB, bT) - (Track.Width div 2);
+                if (edgeDist < 0) then edgeDist := 0;
+                TakeMinD(mEdge, edgeDist);
+            end;
         end;
         Track := Iter.NextPCBObject;
     end;
@@ -973,6 +1057,22 @@ begin
         ann := (Via.Size - Via.HoleSize) div 2;
         TakeMin(mViaAnn, ann);
         nVia := nVia + 1;
+        // Record the hole (center + radius) for the hole-to-hole pass.
+        if (HoleX.Count < MAX_HOLES) then
+        begin
+            HoleX.Add(IntToStr(Via.x));
+            HoleY.Add(IntToStr(Via.y));
+            HoleR.Add(IntToStr(Via.HoleSize div 2));
+        end
+        else
+            capped := True;
+        // Copper-to-edge for the via pad (pad edge = center distance minus pad radius).
+        if (haveOutline) then
+        begin
+            edgeDist := DistPointToBoxEdge(Via.x, Via.y, bL, bR, bB, bT) - (Via.Size div 2);
+            if (edgeDist < 0) then edgeDist := 0;
+            TakeMinD(mEdge, edgeDist);
+        end;
         Via := Iter.NextPCBObject;
     end;
     Board.BoardIterator_Destroy(Iter);
@@ -992,10 +1092,46 @@ begin
             ann := (padDim - Pad.HoleSize) div 2;
             TakeMin(mPadAnn, ann);
             nPad := nPad + 1;
+            // Record the pad hole (center + radius) for the hole-to-hole pass.
+            if (HoleX.Count < MAX_HOLES) then
+            begin
+                HoleX.Add(IntToStr(Pad.x));
+                HoleY.Add(IntToStr(Pad.y));
+                HoleR.Add(IntToStr(Pad.HoleSize div 2));
+            end
+            else
+                capped := True;
+            // Copper-to-edge for the pad (use the smaller pad half-dimension as radius).
+            if (haveOutline) then
+            begin
+                edgeDist := DistPointToBoxEdge(Pad.x, Pad.y, bL, bR, bB, bT) - (padDim div 2);
+                if (edgeDist < 0) then edgeDist := 0;
+                TakeMinD(mEdge, edgeDist);
+            end;
         end;
         Pad := Iter.NextPCBObject;
     end;
     Board.BoardIterator_Destroy(Iter);
+
+    // Hole-to-hole: pairwise nearest-neighbour minimum of center-to-center distance
+    // minus the two hole radii (edge-to-edge gap). O(n^2) over the collected holes.
+    nHoles := HoleX.Count;
+    for i := 0 to nHoles - 1 do
+    begin
+        cx := StrToInt(HoleX[i]);
+        cy := StrToInt(HoleY[i]);
+        rad := StrToInt(HoleR[i]);
+        for j := i + 1 to nHoles - 1 do
+        begin
+            gap := CoordDist(cx, cy, StrToInt(HoleX[j]), StrToInt(HoleY[j]))
+                   - rad - StrToInt(HoleR[j]);
+            if (gap < 0) then gap := 0;
+            TakeMinD(mH2H, gap);
+        end;
+    end;
+    HoleX.Free;
+    HoleY.Free;
+    HoleR.Free;
 
     // Current rule floors
     Iter := Board.BoardIterator_Create;
@@ -1033,6 +1169,9 @@ begin
         if (mViaAnn >= 0) then AddJSONNumber(ResultProps, 'min_via_annular_mm', CoordToMMs(mViaAnn));
         if (mPadHole >= 0) then AddJSONNumber(ResultProps, 'min_pad_hole_mm', CoordToMMs(mPadHole));
         if (mPadAnn >= 0) then AddJSONNumber(ResultProps, 'min_pad_annular_mm', CoordToMMs(mPadAnn));
+        if (mH2H >= 0) then AddJSONNumber(ResultProps, 'min_hole_to_hole_mm', CoordToMMs(Round(mH2H)));
+        if (haveOutline and (mEdge >= 0)) then AddJSONNumber(ResultProps, 'min_copper_to_edge_mm', CoordToMMs(Round(mEdge)));
+        AddJSONBoolean(ResultProps, 'hole_to_hole_capped', capped);
         if (rW >= 0) then AddJSONNumber(ResultProps, 'rule_min_width_mm', CoordToMMs(rW));
         if (rClr >= 0) then AddJSONNumber(ResultProps, 'rule_min_clearance_mm', CoordToMMs(rClr));
         if (rViaHole >= 0) then AddJSONNumber(ResultProps, 'rule_via_hole_mm', CoordToMMs(rViaHole));

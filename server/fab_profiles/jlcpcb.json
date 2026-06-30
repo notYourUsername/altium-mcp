@@ -1,0 +1,46 @@
+{
+  "fab": "JLCPCB",
+  "verified": false,
+  "source": "https://jlcpcb.com/capabilities/pcb-capabilities",
+  "retrieved": "2026-06-29",
+  "notes": "UNVERIFIED. Standard FR-4, 1-4 layer. Values are JLCPCB's hard process minimums. min_trace/min_space 0.09mm (3.5 mil) is the tightest standard capability on 4-layer (with a 20%% surcharge below 4 mil); 2-layer 1oz minimum is 0.127mm (5 mil) and the recommended baseline is 6 mil. min_via_diameter 0.45mm and min_via_drill 0.2mm are the 4+ layer via minimums; 2-layer via minimum is 0.6mm pad / 0.3mm drill. min_annular_ring 0.15mm (6 mil). min_hole_to_hole 0.5mm (edge-to-edge PTH; via-to-via hole clearance is documented as 0.25mm). copper_to_edge 0.3mm per JLCPCB's DFM checklist. JLCPCB does NOT support blind/buried vias in standard production. Confirm all numbers on the live (JS-rendered) capabilities page before setting verified=true.",
+  "stackups": [
+    {
+      "name": "JLC04161H-7628 2L-1.6mm",
+      "layer_count": 2,
+      "finished_thickness_mm": 1.6,
+      "impedance_controlled": false,
+      "layers": [
+        { "kind": "Copper", "copper_weight_oz": 1.0, "thickness_mm": 0.035 },
+        { "kind": "Core", "material": "FR-4", "thickness_mm": 1.53, "dielectric_constant": 4.6 },
+        { "kind": "Copper", "copper_weight_oz": 1.0, "thickness_mm": 0.035 }
+      ]
+    },
+    {
+      "name": "JLC04161H-3313 4L-1.6mm",
+      "layer_count": 4,
+      "finished_thickness_mm": 1.6,
+      "impedance_controlled": false,
+      "layers": [
+        { "kind": "Copper", "copper_weight_oz": 1.0, "thickness_mm": 0.035 },
+        { "kind": "PrePreg", "material": "FR-4 3313", "thickness_mm": 0.2104, "dielectric_constant": 4.16 },
+        { "kind": "Copper", "copper_weight_oz": 0.5, "thickness_mm": 0.0175 },
+        { "kind": "Core", "material": "FR-4", "thickness_mm": 1.065, "dielectric_constant": 4.6 },
+        { "kind": "Copper", "copper_weight_oz": 0.5, "thickness_mm": 0.0175 },
+        { "kind": "PrePreg", "material": "FR-4 3313", "thickness_mm": 0.2104, "dielectric_constant": 4.16 },
+        { "kind": "Copper", "copper_weight_oz": 1.0, "thickness_mm": 0.035 }
+      ]
+    }
+  ],
+  "rules": {
+    "min_trace_mm": 0.09,
+    "min_space_mm": 0.09,
+    "min_via_diameter_mm": 0.45,
+    "min_via_drill_mm": 0.2,
+    "min_annular_ring_mm": 0.15,
+    "min_hole_to_hole_mm": 0.5,
+    "copper_to_edge_mm": 0.3,
+    "min_silk_width_mm": 0.15,
+    "soldermask_expansion_mm": 0.05
+  }
+}

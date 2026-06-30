@@ -1,0 +1,46 @@
+{
+  "fab": "PCBWay",
+  "verified": false,
+  "source": "https://www.pcbway.com/capabilities.html",
+  "retrieved": "2026-06-29",
+  "notes": "UNVERIFIED. Values reflect PCBWay's published minimum-capability FR-4 process (1-4 layer). min_trace/min_space 0.0762mm (3 mil) is PCBWay's advanced minimum; their standard recommendation is 0.15mm (6 mil) and 0.1mm (4 mil) for cost. min_annular_ring 0.13mm; PCBWay's published minimum annular ring for a via-in-pad is 0.15mm (6 mil) but their drill-to-edge tolerance allows 0.13mm in advanced process. min_via_drill 0.2mm (drills below 0.3mm incur a small-hole charge). min_hole_to_hole 0.45mm (edge-to-edge). copper_to_edge 0.2mm. Confirm every number against the live capabilities page before setting verified=true.",
+  "stackups": [
+    {
+      "name": "2L-1.6mm",
+      "layer_count": 2,
+      "finished_thickness_mm": 1.6,
+      "impedance_controlled": false,
+      "layers": [
+        { "kind": "Copper", "copper_weight_oz": 1.0, "thickness_mm": 0.035 },
+        { "kind": "Core", "material": "FR-4", "thickness_mm": 1.53, "dielectric_constant": 4.5 },
+        { "kind": "Copper", "copper_weight_oz": 1.0, "thickness_mm": 0.035 }
+      ]
+    },
+    {
+      "name": "4L-1.6mm",
+      "layer_count": 4,
+      "finished_thickness_mm": 1.6,
+      "impedance_controlled": false,
+      "layers": [
+        { "kind": "Copper", "copper_weight_oz": 1.0, "thickness_mm": 0.035 },
+        { "kind": "PrePreg", "material": "FR-4", "thickness_mm": 0.2104, "dielectric_constant": 4.4 },
+        { "kind": "Copper", "copper_weight_oz": 0.5, "thickness_mm": 0.0175 },
+        { "kind": "Core", "material": "FR-4", "thickness_mm": 1.065, "dielectric_constant": 4.6 },
+        { "kind": "Copper", "copper_weight_oz": 0.5, "thickness_mm": 0.0175 },
+        { "kind": "PrePreg", "material": "FR-4", "thickness_mm": 0.2104, "dielectric_constant": 4.4 },
+        { "kind": "Copper", "copper_weight_oz": 1.0, "thickness_mm": 0.035 }
+      ]
+    }
+  ],
+  "rules": {
+    "min_trace_mm": 0.0762,
+    "min_space_mm": 0.0762,
+    "min_via_diameter_mm": 0.45,
+    "min_via_drill_mm": 0.2,
+    "min_annular_ring_mm": 0.13,
+    "min_hole_to_hole_mm": 0.45,
+    "copper_to_edge_mm": 0.2,
+    "min_silk_width_mm": 0.15,
+    "soldermask_expansion_mm": 0.05
+  }
+}
