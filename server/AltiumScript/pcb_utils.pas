@@ -1,4 +1,4 @@
-﻿// Function to get all unique net names from the current PCB document
+// Function to get all unique net names from the current PCB document
 function GetAllNets(ROOT_DIR: String): String;
 var
     Board       : IPCB_Board;
@@ -2664,7 +2664,7 @@ begin
         LibComp.AddPCBObject(Track);
         PCBServer.SendMessageToRobots(Track.I_ObjectAddress, c_Broadcast, PCBM_BoardRegisteration, c_NoEventData);
 
-        // Left silk â€” split to mark pin 1 (gap at top-left corner for pin 1 indicator)
+        // Left silk — split to mark pin 1 (gap at top-left corner for pin 1 indicator)
         Track := PCBServer.PCBObjectFactory(eTrackObject, eNoDimension, eCreate_Default);
         Track.Layer := SilkLayer;
         Track.x1 := MMsToCoord(CrtX1+0.1); Track.y1 := MMsToCoord(CrtY1+0.1);
@@ -3269,18 +3269,308 @@ end;
 // API and have NOT been validated against a live install. If creation fails,
 // confirm the eRule_ constant and IPCB_Rule property spellings for this rule type.
 function ExecuteCreateDiffPairRule(RequestData: TStringList): String;
+var
+    i, ValueStart : Integer;
+    RuleName, Scope1, ValStr : String;
+    GapMils, MinWMils, MaxWMils, PrefWMils, MaxUncoupMils : Double;
+    Board : IPCB_Board;
+    Rule  : IPCB_Rule;
+    ResultProps, OutputLines : TStringList;
 begin
-    Result := '{"success": false, "error": "create_diff_pair_rule temporarily disabled pending Altium rule-API confirmation; use the Altium PCB Rules editor for now."}';
+    RuleName := '';
+    Scope1 := 'All';
+    GapMils := 6;
+    MinWMils := 4;
+    MaxWMils := 8;
+    PrefWMils := 5;
+    MaxUncoupMils := 200;
+
+    for i := 0 to RequestData.Count - 1 do
+    begin
+        if (Pos('"rule_name"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            RuleName := TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1));
+        end
+        else if (Pos('"scope1"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            Scope1 := TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1));
+        end
+        else if (Pos('"gap_mils"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            ValStr := StringReplace(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), ',', '', REPLACEALL);
+            GapMils := StrToFloatDef(ValStr, GapMils);
+        end
+        else if (Pos('"min_width_mils"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            ValStr := StringReplace(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), ',', '', REPLACEALL);
+            MinWMils := StrToFloatDef(ValStr, MinWMils);
+        end
+        else if (Pos('"max_width_mils"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            ValStr := StringReplace(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), ',', '', REPLACEALL);
+            MaxWMils := StrToFloatDef(ValStr, MaxWMils);
+        end
+        else if (Pos('"preferred_width_mils"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            ValStr := StringReplace(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), ',', '', REPLACEALL);
+            PrefWMils := StrToFloatDef(ValStr, PrefWMils);
+        end
+        else if (Pos('"max_uncoupled_mils"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            ValStr := StringReplace(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), ',', '', REPLACEALL);
+            MaxUncoupMils := StrToFloatDef(ValStr, MaxUncoupMils);
+        end;
+    end;
+
+    Board := PCBServer.GetCurrentPCBBoard;
+    if (Board = nil) then
+    begin
+        Result := '{"success": false, "error": "No PCB document is currently active"}';
+        Exit;
+    end;
+    if (RuleName = '') then
+    begin
+        Result := '{"success": false, "error": "No rule_name provided"}';
+        Exit;
+    end;
+
+    PCBServer.PreProcess;
+    // GUESS: eRule_DiffPairsRouting (NEEDS LIVE CONFIRMATION)
+    Rule := PCBServer.PCBRuleFactory(eRule_DifferentialPairsRouting);
+    Rule.Name := RuleName;
+    Rule.Scope1Expression := Scope1;
+    Rule.Scope2Expression := 'All';
+    // GUESS: gap + width + uncoupled property names (NEEDS LIVE CONFIRMATION)
+    Rule.MinGap := MMsToCoord(GapMils * 0.0254);
+    Rule.MaxGap := MMsToCoord(GapMils * 0.0254);
+    Rule.PreferedGap := MMsToCoord(GapMils * 0.0254);
+    Rule.MinWidth := MMsToCoord(MinWMils * 0.0254);
+    Rule.MaxWidth := MMsToCoord(MaxWMils * 0.0254);
+    Rule.PreferedWidth := MMsToCoord(PrefWMils * 0.0254);
+    Rule.MaxUncoupledLength := MMsToCoord(MaxUncoupMils * 0.0254);
+    Rule.DRCEnabled := True;
+    Board.AddPCBObject(Rule);
+    PCBServer.SendMessageToRobots(Rule.I_ObjectAddress, c_Broadcast, PCBM_BoardRegisteration, c_NoEventData);
+    PCBServer.PostProcess;
+    Board.ViewManager_FullUpdate;
+
+    ResultProps := TStringList.Create;
+    try
+        AddJSONBoolean(ResultProps, 'success', True);
+        AddJSONProperty(ResultProps, 'rule_name', RuleName);
+        AddJSONProperty(ResultProps, 'rule_kind', 'DifferentialPairsRouting');
+        AddJSONProperty(ResultProps, 'scope1', Scope1);
+        AddJSONNumber(ResultProps, 'gap_mils', GapMils);
+        AddJSONNumber(ResultProps, 'min_width_mils', MinWMils);
+        AddJSONNumber(ResultProps, 'max_width_mils', MaxWMils);
+        AddJSONNumber(ResultProps, 'preferred_width_mils', PrefWMils);
+        AddJSONNumber(ResultProps, 'max_uncoupled_mils', MaxUncoupMils);
+        OutputLines := TStringList.Create;
+        try
+            OutputLines.Text := BuildJSONObject(ResultProps);
+            Result := OutputLines.Text;
+        finally
+            OutputLines.Free;
+        end;
+    finally
+        ResultProps.Free;
+    end;
 end;
 
-// Impedance constraint rule - temporarily stubbed pending Altium rule-API confirmation.
+
+// Create an Impedance Constraint design rule.
+// Params: rule_name, scope1, min_ohms, max_ohms.
+// NEEDS LIVE CONFIRMATION: the enum constant eRule_MaxMinImpedance and the
+// property names MinImpedance / MaxImpedance are best-guess from the Altium
+// DelphiScript API and have NOT been validated against a live install. Impedance
+// is expressed in ohms (no coord conversion). If creation fails, confirm the
+// eRule_ constant and IPCB_Rule impedance property spellings for this rule type.
 function ExecuteCreateImpedanceRule(RequestData: TStringList): String;
+var
+    i, ValueStart : Integer;
+    RuleName, Scope1, ValStr : String;
+    MinOhms, MaxOhms : Double;
+    Board : IPCB_Board;
+    Rule  : IPCB_Rule;
+    ResultProps, OutputLines : TStringList;
 begin
-    Result := '{"success": false, "error": "create_impedance_rule temporarily disabled pending Altium rule-API confirmation."}';
+    RuleName := '';
+    Scope1 := 'All';
+    MinOhms := -1;
+    MaxOhms := -1;
+
+    for i := 0 to RequestData.Count - 1 do
+    begin
+        if (Pos('"rule_name"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            RuleName := TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1));
+        end
+        else if (Pos('"scope1"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            Scope1 := TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1));
+        end
+        else if (Pos('"min_ohms"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            ValStr := StringReplace(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), ',', '', REPLACEALL);
+            MinOhms := StrToFloatDef(ValStr, -1);
+        end
+        else if (Pos('"max_ohms"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            ValStr := StringReplace(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), ',', '', REPLACEALL);
+            MaxOhms := StrToFloatDef(ValStr, -1);
+        end;
+    end;
+
+    Board := PCBServer.GetCurrentPCBBoard;
+    if (Board = nil) then
+    begin
+        Result := '{"success": false, "error": "No PCB document is currently active"}';
+        Exit;
+    end;
+    if (RuleName = '') then
+    begin
+        Result := '{"success": false, "error": "No rule_name provided"}';
+        Exit;
+    end;
+    if (MinOhms < 0) or (MaxOhms < 0) then
+    begin
+        Result := '{"success": false, "error": "min_ohms and max_ohms are required"}';
+        Exit;
+    end;
+
+    PCBServer.PreProcess;
+    // GUESS: eRule_MaxMinImpedance (NEEDS LIVE CONFIRMATION)
+    Rule := PCBServer.PCBRuleFactory(eRule_MaxMinImpedance);
+    Rule.Name := RuleName;
+    Rule.Scope1Expression := Scope1;
+    Rule.Scope2Expression := 'All';
+    // GUESS: MinImpedance / MaxImpedance, ohms (NEEDS LIVE CONFIRMATION)
+    Rule.MinImpedance := MinOhms;
+    Rule.MaxImpedance := MaxOhms;
+    Rule.DRCEnabled := True;
+    Board.AddPCBObject(Rule);
+    PCBServer.SendMessageToRobots(Rule.I_ObjectAddress, c_Broadcast, PCBM_BoardRegisteration, c_NoEventData);
+    PCBServer.PostProcess;
+    Board.ViewManager_FullUpdate;
+
+    ResultProps := TStringList.Create;
+    try
+        AddJSONBoolean(ResultProps, 'success', True);
+        AddJSONProperty(ResultProps, 'rule_name', RuleName);
+        AddJSONProperty(ResultProps, 'rule_kind', 'Impedance');
+        AddJSONProperty(ResultProps, 'scope1', Scope1);
+        AddJSONNumber(ResultProps, 'min_ohms', MinOhms);
+        AddJSONNumber(ResultProps, 'max_ohms', MaxOhms);
+        OutputLines := TStringList.Create;
+        try
+            OutputLines.Text := BuildJSONObject(ResultProps);
+            Result := OutputLines.Text;
+        finally
+            OutputLines.Free;
+        end;
+    finally
+        ResultProps.Free;
+    end;
 end;
 
-// Matched-length rule - temporarily stubbed pending Altium rule-API confirmation.
+
+// Create a Matched Net Lengths design rule.
+// Params: rule_name, scope1, tolerance_mils.
+// NEEDS LIVE CONFIRMATION: the enum constant eRule_MatchedLengths and the
+// property name MatchTolerance are best-guess from the Altium DelphiScript API
+// and have NOT been validated against a live install. Tolerance is a length, so
+// it is mils -> internal coords. If creation fails, confirm the eRule_ constant
+// and IPCB_Rule tolerance property spelling for this rule type.
 function ExecuteCreateLengthMatchRule(RequestData: TStringList): String;
+var
+    i, ValueStart : Integer;
+    RuleName, Scope1, ValStr : String;
+    TolMils : Double;
+    Board : IPCB_Board;
+    Rule  : IPCB_Rule;
+    ResultProps, OutputLines : TStringList;
 begin
-    Result := '{"success": false, "error": "create_length_match_rule temporarily disabled pending Altium rule-API confirmation."}';
+    RuleName := '';
+    Scope1 := 'All';
+    TolMils := -1;
+
+    for i := 0 to RequestData.Count - 1 do
+    begin
+        if (Pos('"rule_name"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            RuleName := TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1));
+        end
+        else if (Pos('"scope1"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            Scope1 := TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1));
+        end
+        else if (Pos('"tolerance_mils"', RequestData[i]) > 0) then
+        begin
+            ValueStart := Pos(':', RequestData[i]) + 1;
+            ValStr := StringReplace(TrimJSON(Copy(RequestData[i], ValueStart, Length(RequestData[i]) - ValueStart + 1)), ',', '', REPLACEALL);
+            TolMils := StrToFloatDef(ValStr, -1);
+        end;
+    end;
+
+    Board := PCBServer.GetCurrentPCBBoard;
+    if (Board = nil) then
+    begin
+        Result := '{"success": false, "error": "No PCB document is currently active"}';
+        Exit;
+    end;
+    if (RuleName = '') then
+    begin
+        Result := '{"success": false, "error": "No rule_name provided"}';
+        Exit;
+    end;
+    if (TolMils < 0) then
+    begin
+        Result := '{"success": false, "error": "tolerance_mils is required"}';
+        Exit;
+    end;
+
+    PCBServer.PreProcess;
+    // GUESS: eRule_MatchedLengths (NEEDS LIVE CONFIRMATION)
+    Rule := PCBServer.PCBRuleFactory(eRule_MatchedLengths);
+    Rule.Name := RuleName;
+    Rule.Scope1Expression := Scope1;
+    Rule.Scope2Expression := 'All';
+    // GUESS: MatchTolerance, length (mils -> coord) (NEEDS LIVE CONFIRMATION)
+    Rule.MatchTolerance := MMsToCoord(TolMils * 0.0254);
+    Rule.DRCEnabled := True;
+    Board.AddPCBObject(Rule);
+    PCBServer.SendMessageToRobots(Rule.I_ObjectAddress, c_Broadcast, PCBM_BoardRegisteration, c_NoEventData);
+    PCBServer.PostProcess;
+    Board.ViewManager_FullUpdate;
+
+    ResultProps := TStringList.Create;
+    try
+        AddJSONBoolean(ResultProps, 'success', True);
+        AddJSONProperty(ResultProps, 'rule_name', RuleName);
+        AddJSONProperty(ResultProps, 'rule_kind', 'MatchedNetLengths');
+        AddJSONProperty(ResultProps, 'scope1', Scope1);
+        AddJSONNumber(ResultProps, 'tolerance_mils', TolMils);
+        OutputLines := TStringList.Create;
+        try
+            OutputLines.Text := BuildJSONObject(ResultProps);
+            Result := OutputLines.Text;
+        finally
+            OutputLines.Free;
+        end;
+    finally
+        ResultProps.Free;
+    end;
 end;
