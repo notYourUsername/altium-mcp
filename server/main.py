@@ -1599,12 +1599,15 @@ async def list_fab_profiles(ctx: Context) -> str:
 @mcp.tool()
 async def apply_fab_profile(ctx: Context, fab: str) -> str:
     """
-    Apply a fab house's minimum capabilities to the current PCB's design rules: raises
-    the global min-width, min-clearance and routing-via floors to the fab's limits and
-    ensures a Minimum Annular Ring rule exists. Use list_fab_profiles to see options.
+    Apply a fab house's minimum capabilities to the current PCB's design rules. Tighten-only:
+    raises the global min-width, min-clearance and routing-via floors to AT LEAST the fab's
+    limits (never loosens a stricter existing rule), and ensures a Minimum Annular Ring rule
+    exists. Use list_fab_profiles to see options.
 
-    This modifies the board (one undoable step). It only tightens the All-scoped global
-    rules; net-specific rules are left untouched.
+    This modifies the board (one undoable step). It only touches All-scoped global rules;
+    net-specific rules (impedance-controlled widths, diff pairs, power nets) are left untouched.
+    Note: the fab minimum is a manufacturability floor, not a target - impedance- and
+    current-driven widths are usually wider and should not be reduced to it.
 
     Args:
         fab: Fab name or profile file stem (e.g. "PCBWay").

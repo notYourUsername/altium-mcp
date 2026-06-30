@@ -788,6 +788,7 @@ var
     Lo      : IPCB_LayerObject;
     Kind    : String;
     nWidth, nClear, nVia : Integer;
+    chg     : Boolean;
     annularRule : IPCB_Rule;
     ResultProps, OutputLines : TStringList;
 begin
@@ -826,25 +827,35 @@ begin
         Kind := Rule.GetState_ShortDescriptorString;
         if (Kind = 'Width Constraint') and (Rule.Scope1Expression = 'All') and (MinTrace > 0) and (LS <> nil) then
         begin
+            // Tighten-only: only raise a layer's floor; never loosen the designer's intent.
+            chg := False;
             Lo := LS.FirstLayer;
             while (Lo <> nil) do
             begin
-                Rule.MinWidth[Lo.LayerID] := MMsToCoord(MinTrace);
+                if (MMsToCoord(MinTrace) > Rule.MinWidth[Lo.LayerID]) then
+                begin
+                    Rule.MinWidth[Lo.LayerID] := MMsToCoord(MinTrace);
+                    chg := True;
+                end;
                 if (Lo = LS.LastLayer) then Break;
                 Lo := LS.NextLayer(Lo);
             end;
-            nWidth := nWidth + 1;
+            if chg then nWidth := nWidth + 1;
         end
         else if (Kind = 'Clearance Constraint') and (Rule.Scope1Expression = 'All') and (Rule.Scope2Expression = 'All') and (MinSpace > 0) then
         begin
-            Rule.Gap := MMsToCoord(MinSpace);
-            nClear := nClear + 1;
+            if (MMsToCoord(MinSpace) > Rule.Gap) then
+            begin
+                Rule.Gap := MMsToCoord(MinSpace);
+                nClear := nClear + 1;
+            end;
         end
         else if (Kind = 'Routing Via Style') and (Rule.Scope1Expression = 'All') then
         begin
-            if (ViaHole > 0) then Rule.MinHoleWidth := MMsToCoord(ViaHole);
-            if (ViaPad > 0) then Rule.MinWidth := MMsToCoord(ViaPad);
-            nVia := nVia + 1;
+            chg := False;
+            if (ViaHole > 0) and (MMsToCoord(ViaHole) > Rule.MinHoleWidth) then begin Rule.MinHoleWidth := MMsToCoord(ViaHole); chg := True; end;
+            if (ViaPad > 0) and (MMsToCoord(ViaPad) > Rule.MinWidth) then begin Rule.MinWidth := MMsToCoord(ViaPad); chg := True; end;
+            if chg then nVia := nVia + 1;
         end
         else if (Kind = 'Minimum Annular Ring') then
             annularRule := Rule;
@@ -862,8 +873,10 @@ begin
             annularRule.DRCEnabled := True;
             Board.AddPCBObject(annularRule);
             PCBServer.SendMessageToRobots(annularRule.I_ObjectAddress, c_Broadcast, PCBM_BoardRegisteration, c_NoEventData);
-        end;
-        annularRule.Minimum := MMsToCoord(Annular);
+            annularRule.Minimum := MMsToCoord(Annular);
+        end
+        else if (MMsToCoord(Annular) > annularRule.Minimum) then
+            annularRule.Minimum := MMsToCoord(Annular);  // tighten-only
     end;
 
     PCBServer.PostProcess;
