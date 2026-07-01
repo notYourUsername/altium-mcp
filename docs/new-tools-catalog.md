@@ -1,4 +1,4 @@
-# Altium MCP — new tools catalog (server build 2026-06-30-b6)
+# Altium MCP — new tools catalog (server build 2026-06-30-b8)
 
 Tools added in this development cycle, grouped by area. All coordinates/sizes are in
 **mils, relative to board origin** unless noted. Run `get_server_version` to confirm a
@@ -43,3 +43,38 @@ chat is on this build; run `run_self_test` after any restart to confirm health.
 - Specialized high-speed constraints (diff-pair gap, impedance ohms, matched-length tolerance) aren't directly script-settable in AD25 — use `clone_rule` from a template.
 - PCBWay fab profile is UNVERIFIED for this 4-layer board — confirm the numbers before relying on the DFM pass.
 - New Python tools require an extension restart + fresh chat to appear; `.pas` changes (readers/fixes) go live per call.
+
+## Added after b6
+
+- **get_diff_pair_skew(tolerance_mils=5)** — intra-pair length skew for differential pairs (inferred from `X_D_P/X_D_N`, `X_P/X_N`, `X+/X-` naming), flags pairs over tolerance. (b6)
+- **get_server_status** — now also reports `altium_instances`, `bridge_healthy`, and a note; use it to catch the X2.EXE pileup below. (b8)
+
+## Bridge reliability & operating model (b7 / b8)
+
+The bridge writes `request.json`, shells `X2.EXE -RScriptingSystem:RunScript(...Altium_API>Run)`
+to make the running Altium execute the script, then waits for `response.json`. Three
+failure modes were diagnosed and mitigated:
+
+1. **New chat shows "no Altium MCP connected."** Server cold-start race — the local
+   extension takes a few seconds to register. **Fix: just retry** (or wait ~5 s).
+2. **Tools hang mid-session (silent timeouts).** Root cause = **`X2.EXE` process pileup**:
+   the `-R` forward spawns a *new* blank Altium instance when the existing one is stuck,
+   so requests land in a board-less instance. Also caused by a leftover **error modal**
+   in Altium (an open modal freezes the whole script engine). Fixes:
+   - b7: the dispatcher's unknown-command branch now returns a JSON error instead of a
+     `ShowMessage` **modal** (a modal there froze the bridge until a human clicked OK).
+   - b8: the launcher **counts X2.EXE instances before each call and aborts with a clear
+     error** ("N Altium instances running - close extras") instead of adding to the pile
+     and timing out. `get_server_status` surfaces the count.
+   - Manual recovery: close all Altium windows except the one with your PcbDoc (save first).
+3. **A tool is missing / behaves like old code.** Stale Python server process.
+   **Fix: `get_server_version`** (reports the running build); if it's not the latest,
+   restart the extension and open a new chat. Orphaned server processes can be cleared
+   by killing `python.exe` processes whose command line contains the extension path.
+
+### Operating cheat-sheet
+- New chat won't connect -> **retry**.
+- Tools hang -> run **get_server_status**; if `altium_instances` != 1, close extra Altium
+  windows; also check Altium for an open error dialog.
+- Tool missing / old behavior -> **get_server_version**; if stale, restart extension + new chat.
+- After any restart/update -> **run_self_test** (confirms all read tools + a live board).
