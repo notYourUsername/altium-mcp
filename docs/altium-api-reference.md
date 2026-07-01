@@ -215,3 +215,61 @@ create a correctly-typed, correctly-scoped rule (diff-pair also sets min/max
 width) and return a `constraint_note` telling the user to set the specialized
 value in the GUI.
 
+
+
+---
+
+# Session findings (builds b1–b8)
+
+## Primitive creation (vias, tracks) — confirmed working
+```pascal
+Via := PCBServer.PCBObjectFactory(eViaObject, eNoDimension, eCreate_Default);
+Via.x := MilsToCoord(xMils) + Board.XOrigin;   // positions are origin-relative mils
+Via.y := MilsToCoord(yMils) + Board.YOrigin;
+Via.Size := MilsToCoord(padMils);              // pad (outer) diameter
+Via.HoleSize := MilsToCoord(holeMils);         // drill
+Via.LowLayer := eTopLayer; Via.HighLayer := eBottomLayer;
+Board.AddPCBObject(Via);
+PCBServer.SendMessageToRobots(Via.I_ObjectAddress, c_Broadcast, PCBM_BoardRegisteration, c_NoEventData);
+
+Track := PCBServer.PCBObjectFactory(eTrackObject, eNoDimension, eCreate_Default);
+Track.Layer := eTopLayer;  // or eBottomLayer / eMidLayer1 / eMidLayer2
+Track.x1 := ...; Track.y1 := ...; Track.x2 := ...; Track.y2 := ...; Track.Width := MilsToCoord(w);
+Board.AddPCBObject(Track);
+```
+- Net assignment: no confirmed `GetPcbNetByRefName`; instead **iterate `eNetObject`** and match
+  `Net.Name`, then `Prim.Net := Net`. `add_via` returns `net_found` to confirm the match.
+- Delete a free primitive: iterate `eViaObject`, skip `InComponent`, compare distance in **mm**
+  (`CoordToMMs`) to avoid the 32-bit overflow when squaring internal coords.
+
+## Rule property gotchas
+- **Width is per-layer indexed**: `Rule.MinWidth[Layer.LayerID]`, `Rule.MaxWidth[Layer.LayerID]`,
+  `Rule.FavoredWidth[Layer.LayerID]` (iterate `Board.LayerStack_V7`). Scalar `Rule.MinWidth := X`
+  on a routing rule throws **"wrong number of params"**.
+- High-speed **constraint setters are not exposed** to DelphiScript in AD25: `MinGap/MaxGap/PreferedGap`,
+  `MinImpedance/MaxImpedance`, `MatchTolerance` all throw "Undeclared identifier". The values are
+  readable (descriptor / `GetState_DataSummaryString`) but not writable.
+- **Workaround = clone**: `NewRule := SourceRule.Replicate;` copies ALL constraints; then set only
+  `Name` + `Scope1Expression/Scope2Expression` (both settable) and optionally `DRCEnabled`.
+- Confirmed enums: `eRule_DifferentialPairsRouting`, `eRule_MaxMinImpedance`, `eRule_MatchedLengths`,
+  `eRule_MaxMinWidth`, `eRule_Clearance`, `eRule_RoutingVias`.
+
+## Class / poured-net reading
+- Object classes: iterate `eClassObject`; `Cls.MemberKind = eClassMemberKind_Net` for net classes;
+  `Cls.Name`, `Cls.SuperClass`. Differential-pair *object* enumeration and class *member* lists are
+  still unconfirmed APIs.
+- Poured nets: iterate `ePolyObject`, read `Poly.Net.Name` → set of nets satisfied by a pour
+  (used to exclude planes from the unrouted count).
+
+## Bridge architecture & reliability
+- Flow: Python writes `C:\Users\Public\altium_mcp\request.json` → shells
+  `X2.EXE -RScriptingSystem:RunScript(ProjectName="...Altium_API.PrjScr"^|ProcName="Altium_API>Run")`
+  → the running Altium executes the script → writes `response.json` → Python reads it.
+- **Never `ShowMessage` on the dispatcher's error paths** — a modal freezes Altium's script engine,
+  so every subsequent bridge call hangs until a human clicks OK. Unknown command now returns JSON.
+- **X2.EXE pileup**: the `-R` forward can spawn a new blank Altium instance if the existing one is
+  stuck; requests then land in a board-less instance (silent timeout). The launcher now counts
+  instances and aborts with a clear error when >1; `get_server_status` reports `altium_instances`.
+- `.pas` files reload per bridge call (edits go live immediately); `main.py` changes need an
+  extension restart + fresh chat. `get_server_version` reports the running build.
+

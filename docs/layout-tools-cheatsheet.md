@@ -82,3 +82,46 @@ clone_rule("TPL_DIFF_USB2_90R", "DP_USB2_PORT1",
   to match your stackup (current board uses ~23.6 mil pad / 11.8 mil hole).
 - Via/track tools modify copper; run a DRC (`run_drc`) after a batch.
 - These are assists to remove tedium, not a replacement for the Altium autorouter.
+
+
+---
+
+## Analysis & health tools (added after the placement/routing suite)
+
+**get_server_version()** — running build string (e.g. `2026-06-30-b8`). If older than the
+latest deploy, the chat is on a stale server process.
+
+**get_server_status()** — includes `altium_instances` and `bridge_healthy`. If
+`altium_instances` isn't 1, close the extra Altium windows (the bridge will hang otherwise).
+
+**run_self_test()** — exercises all read-only bridge commands, returns passed/total. Run it
+after any restart/update to confirm the server is healthy and a board is active.
+
+**design_review()** — one-call snapshot: board info + DRC-by-type + unrouted signal count + rule count.
+
+**get_drc_summary(fresh=False)** — DRC violations grouped by type (vs the raw list).
+`fresh=True` re-runs the DRC (repours polygons, one undo step).
+
+**get_net_classes()** — object classes; net classes show `kind:"Net"`. Confirms `InNetClass('USB')` names.
+
+**get_routing_status()** — ratsnest-based routed/unrouted split (no plane miscount) + routed lengths.
+
+**get_unrouted_nets()** — per-net outstanding ratsnest; flags `has_pour` and reports
+`total_unrouted_signal_nets` (excludes GND/power planes).
+
+**get_diff_pair_skew(tolerance_mils=5)** — intra-pair length skew (from `X_D_P/X_D_N`, `X_P/X_N`
+naming), flags pairs over tolerance.
+```
+get_diff_pair_skew(5)   # e.g. USB_D_P/USB_D_N skew 6.09 mil -> flagged
+```
+
+### Health-check sequence after a restart
+```
+get_server_version   # confirm the expected build
+get_server_status    # confirm altium_instances == 1
+run_self_test        # confirm all read tools pass
+```
+If a new chat reports no Altium tools, just retry (server cold-start race). If tools hang
+mid-session, run get_server_status and close extra Altium windows. See
+`new-tools-catalog.md` -> "Bridge reliability & operating model" for the full picture.
+
